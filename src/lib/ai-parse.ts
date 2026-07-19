@@ -115,7 +115,7 @@ function mapLegacyType(t?: string): AiResponse['type'] {
   return 'chat';
 }
 
-/** Build motivational reply for local-db path using day context */
+/** Build motivational reply — never invent meal labels; remaining must match app math */
 export function buildLocalReply(
   type: 'food' | 'exercise',
   totalKcal: number,
@@ -124,11 +124,11 @@ export function buildLocalReply(
 ): string {
   const greet = name ? `${name}, ` : '';
   if (type === 'exercise') {
-    return `${greet}keren banget! Olahraga ini estimasi bakar ~${totalKcal} kcal — sudah aku catat. Setelah ini sisa kalorimu sekitar ${remainingAfter} kcal. Terus jaga konsistensimu!`;
+    return `${greet}keren banget! Olahraga ini estimasi bakar ~${totalKcal} kcal — sudah aku catat. Sisa kalorimu sekarang ~${remainingAfter} kcal. Terus jaga konsistensimu!`;
   }
   let advice = '';
   if (remainingAfter < 0) {
-    advice = ` Kamu sudah sedikit di atas target hari ini (${Math.abs(remainingAfter)} kcal). Besok kita balance lagi ya — atau tambah sedikit aktivitas.`;
+    advice = ` Kamu sudah di atas target hari ini (${Math.abs(remainingAfter)} kcal). Besok kita balance lagi ya — atau tambah sedikit aktivitas.`;
   } else if (remainingAfter < 300) {
     advice = ` Sisa kalorimu tinggal ~${remainingAfter} kcal — pilih camilan ringan atau protein kalau masih lapar.`;
   } else if (remainingAfter > 800) {
@@ -137,4 +137,13 @@ export function buildLocalReply(
     advice = ` Sisa kalorimu ~${remainingAfter} kcal — masih on track!`;
   }
   return `${greet}mantap, sudah dicatat (~${totalKcal} kcal)!${advice} Tetap semangat hari ini!`;
+}
+
+/** Strip hallucinated meal-time labels from AI reply if any slipped through */
+export function stripMealTimeLabels(reply: string): string {
+  return (reply || '')
+    .replace(/\bMakan\s+(pagi|siang|malam|sore)\b\s*/gi, '')
+    .replace(/\b(sarapan|makan\s+siang|makan\s+malam|makan\s+sore)\b\s*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim();
 }

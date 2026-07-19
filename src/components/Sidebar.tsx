@@ -18,10 +18,10 @@ import {
 const links = [
   { href: '/today', label: 'Hari ini', icon: MessageCircle },
   { href: '/goals', label: 'Target Harian', icon: Flag },
-  { href: '/weekly', label: 'Ringkasan Mingguan', icon: BarChart3 },
+  { href: '/weekly', label: 'Ringkasan', icon: BarChart3 },
   { href: '/weight', label: 'Pelacak Berat', icon: Scale },
   { href: '/reminders', label: 'Pengingat', icon: Bell },
-  { href: '/today#water', label: 'Air Minum', icon: Droplets },
+  { href: '/settings#water', label: 'Air Minum', icon: Droplets },
   { href: '/account', label: 'Akun', icon: User },
   { href: '/settings', label: 'Pengaturan', icon: Settings },
 ];

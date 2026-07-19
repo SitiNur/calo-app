@@ -36,7 +36,11 @@ export default function AccountPage() {
     if (profile.weight) setWeight(Number(profile.weight));
     if (profile.activity_level) setActivityLevel(profile.activity_level);
     if (profile.weight_goal) setWeightGoal(profile.weight_goal);
-    if (profile.target_speed != null) setTargetSpeed(Number(profile.target_speed) || 0.5);
+    if (profile.target_speed != null && Number(profile.target_speed) > 0) {
+      setTargetSpeed(Number(profile.target_speed));
+    } else if (profile.weight_goal && profile.weight_goal !== 'maintain') {
+      setTargetSpeed(0.5);
+    }
   }, [profile]);
 
   const preview = useMemo(
@@ -53,12 +57,16 @@ export default function AccountPage() {
     [gender, age, height, weight, activityLevel, weightGoal, targetSpeed]
   );
 
+  const floor = gender === 'male' ? 1500 : 1200;
+  const rawLoseTarget = preview.tdee - preview.dailyAdjust;
+  const hitFloor = weightGoal === 'lose' && rawLoseTarget < floor;
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user) return;
     setSaving(true);
     setDone(false);
-    await supabase
+    const { error } = await supabase
       .from('profiles')
       .update({
         full_name: fullName,
@@ -80,125 +88,161 @@ export default function AccountPage() {
         updated_at: new Date().toISOString(),
       })
       .eq('id', user.id);
-    await refreshProfile();
     setSaving(false);
+    if (error) {
+      alert(error.message || 'Gagal menyimpan profil');
+      return;
+    }
+    await refreshProfile();
     setDone(true);
   };
 
   return (
     <AppShell title="Akun">
-      <form onSubmit={onSubmit} className="px-4 pb-8 space-y-3 animate-fade-up">
-        <p className="text-xs text-[var(--muted)]">{user?.email}</p>
+      <div className="px-4 pb-8 space-y-6 animate-fade-up">
+        <form onSubmit={onSubmit} className="space-y-3">
+          <p className="text-xs text-[var(--muted)]">{user?.email}</p>
 
-        <input
-          value={fullName}
-          onChange={(e) => setFullName(e.target.value)}
-          placeholder="Nama"
-          className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none"
-        />
+          <input
+            value={fullName}
+            onChange={(e) => setFullName(e.target.value)}
+            placeholder="Nama"
+            className="w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm outline-none"
+          />
 
-        <div className="grid grid-cols-2 gap-2">
-          {(['male', 'female'] as const).map((g) => (
-            <button
-              key={g}
-              type="button"
-              onClick={() => setGender(g)}
-              className={`rounded-2xl border py-3 text-sm ${
-                gender === g ? 'border-[var(--brand)] bg-[var(--bg-soft)]' : 'border-[var(--border)] bg-white'
-              }`}
-            >
-              {g === 'male' ? 'Pria' : 'Wanita'}
-            </button>
+          <div className="grid grid-cols-2 gap-2">
+            {(['male', 'female'] as const).map((g) => (
+              <button
+                key={g}
+                type="button"
+                onClick={() => setGender(g)}
+                className={`rounded-2xl border py-3 text-sm ${
+                  gender === g
+                    ? 'border-[var(--brand)] bg-[var(--bg-soft)]'
+                    : 'border-[var(--border)] bg-white'
+                }`}
+              >
+                {g === 'male' ? 'Pria' : 'Wanita'}
+              </button>
+            ))}
+          </div>
+
+          {[
+            { label: 'Usia', value: age, set: setAge },
+            { label: 'Tinggi (cm)', value: height, set: setHeight },
+            { label: 'Berat (kg)', value: weight, set: setWeight },
+          ].map((f) => (
+            <label key={f.label} className="block text-xs text-[var(--muted)]">
+              {f.label}
+              <input
+                type="number"
+                value={f.value}
+                onChange={(e) => f.set(Number(e.target.value))}
+                className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)] outline-none"
+              />
+            </label>
           ))}
-        </div>
 
-        {[
-          { label: 'Usia', value: age, set: setAge },
-          { label: 'Tinggi (cm)', value: height, set: setHeight },
-          { label: 'Berat (kg)', value: weight, set: setWeight },
-        ].map((f) => (
-          <label key={f.label} className="block text-xs text-[var(--muted)]">
-            {f.label}
-            <input
-              type="number"
-              value={f.value}
-              onChange={(e) => f.set(Number(e.target.value))}
-              className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)] outline-none"
-            />
-          </label>
-        ))}
-
-        <label className="block text-xs text-[var(--muted)]">
-          Aktivitas
-          <select
-            value={activityLevel}
-            onChange={(e) => setActivityLevel(e.target.value as ActivityLevel)}
-            className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)]"
-          >
-            {(Object.keys(ACTIVITY_LABELS) as ActivityLevel[]).map((k) => (
-              <option key={k} value={k}>
-                {ACTIVITY_LABELS[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        <label className="block text-xs text-[var(--muted)]">
-          Tujuan
-          <select
-            value={weightGoal}
-            onChange={(e) => setWeightGoal(e.target.value as WeightGoal)}
-            className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)]"
-          >
-            {(Object.keys(GOAL_LABELS) as WeightGoal[]).map((k) => (
-              <option key={k} value={k}>
-                {GOAL_LABELS[k]}
-              </option>
-            ))}
-          </select>
-        </label>
-
-        {weightGoal !== 'maintain' && (
           <label className="block text-xs text-[var(--muted)]">
-            Kecepatan {targetSpeed} kg/minggu
-            <input
-              type="range"
-              min={0.25}
-              max={1}
-              step={0.25}
-              value={targetSpeed}
-              onChange={(e) => setTargetSpeed(Number(e.target.value))}
-              className="mt-2 w-full"
-            />
+            Aktivitas
+            <select
+              value={activityLevel}
+              onChange={(e) => setActivityLevel(e.target.value as ActivityLevel)}
+              className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)]"
+            >
+              {(Object.keys(ACTIVITY_LABELS) as ActivityLevel[]).map((k) => (
+                <option key={k} value={k}>
+                  {ACTIVITY_LABELS[k]}
+                </option>
+              ))}
+            </select>
           </label>
-        )}
 
-        <div className="rounded-2xl bg-[var(--bg-soft)] px-4 py-3 text-sm">
-          <p>
-            BMR {preview.bmr} · TDEE {preview.tdee}
-          </p>
-          <p className="font-semibold text-[var(--brand-dark)]">
-            Target baru: {preview.targetCalories} kcal
-          </p>
-        </div>
+          <label className="block text-xs text-[var(--muted)]">
+            Tujuan
+            <select
+              value={weightGoal}
+              onChange={(e) => setWeightGoal(e.target.value as WeightGoal)}
+              className="mt-1 w-full rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--ink)]"
+            >
+              {(Object.keys(GOAL_LABELS) as WeightGoal[]).map((k) => (
+                <option key={k} value={k}>
+                  {GOAL_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          </label>
 
-        <button
-          type="submit"
-          disabled={saving}
-          className="w-full rounded-2xl bg-[var(--brand)] py-3.5 font-semibold text-white disabled:opacity-50"
-        >
-          {saving ? 'Menyimpan…' : 'Simpan & hitung ulang'}
-        </button>
-        {done && (
+          {weightGoal !== 'maintain' && (
+            <label className="block text-xs text-[var(--muted)]">
+              Kecepatan {targetSpeed} kg/minggu
+              <input
+                type="range"
+                min={0.25}
+                max={1}
+                step={0.25}
+                value={targetSpeed}
+                onChange={(e) => setTargetSpeed(Number(e.target.value))}
+                className="mt-2 w-full"
+              />
+              <span className="mt-1 block text-[11px]">
+                Penyesuaian ≈ {preview.dailyAdjust} kcal/hari (
+                {weightGoal === 'lose' ? 'defisit' : 'surplus'})
+              </span>
+            </label>
+          )}
+
+          <div className="rounded-2xl bg-[var(--bg-soft)] px-4 py-3 text-sm space-y-1">
+            <p>
+              BMR {preview.bmr} · TDEE {preview.tdee}
+            </p>
+            {weightGoal === 'lose' && (
+              <p className="text-xs text-[var(--muted)]">
+                TDEE − {preview.dailyAdjust} = {rawLoseTarget}
+                {hitFloor ? ` → dibatasi minimum aman ${floor}` : ''}
+              </p>
+            )}
+            {weightGoal === 'gain' && (
+              <p className="text-xs text-[var(--muted)]">
+                TDEE + {preview.dailyAdjust} = {preview.targetCalories}
+              </p>
+            )}
+            <p className="font-semibold text-[var(--brand-dark)]">
+              Target baru: {preview.targetCalories} kcal
+            </p>
+            {hitFloor && (
+              <p className="text-xs text-[var(--miss)]">
+                Kecepatan lebih tinggi tidak menurunkan target lagi karena sudah di batas aman (
+                {floor} kcal).
+              </p>
+            )}
+            {profile?.target_calories != null &&
+              profile.target_calories !== preview.targetCalories && (
+                <p className="text-xs text-[var(--ok)]">
+                  Berubah dari {profile.target_calories} → {preview.targetCalories} kcal (tekan
+                  Simpan)
+                </p>
+              )}
+          </div>
+
           <button
-            type="button"
-            onClick={() => router.push('/today')}
-            className="w-full text-sm text-[var(--ok)]"
+            type="submit"
+            disabled={saving}
+            className="w-full rounded-2xl bg-[var(--brand)] py-3.5 font-semibold text-white disabled:opacity-50"
           >
-            Profil diperbarui — kembali ke Hari ini
+            {saving ? 'Menyimpan…' : 'Simpan & hitung ulang'}
           </button>
-        )}
-      </form>
+          {done && (
+            <button
+              type="button"
+              onClick={() => router.push('/today')}
+              className="w-full text-sm text-[var(--ok)]"
+            >
+              Profil diperbarui — kembali ke Hari ini
+            </button>
+          )}
+        </form>
+      </div>
     </AppShell>
   );
 }

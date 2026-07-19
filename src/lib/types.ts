@@ -22,6 +22,8 @@ export interface Profile {
   carbs_target_g: number | null;
   fat_target_g: number | null;
   water_goal_ml: number | null;
+  /** Tampilkan pelacak air di halaman Hari ini */
+  show_water_tracker?: boolean | null;
   profile_completed: boolean;
   updated_at?: string;
 }

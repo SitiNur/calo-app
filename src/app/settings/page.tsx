@@ -1,15 +1,71 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { ChevronRight, KeyRound } from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
+import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { useAuth } from '@/contexts/AuthContext';
+import { createClient } from '@/lib/supabase/client';
 
 export default function SettingsPage() {
-  const { profile } = useAuth();
+  const { user, profile, refreshProfile } = useAuth();
+  const supabase = createClient();
+  const [showWater, setShowWater] = useState(true);
+  const [savingWater, setSavingWater] = useState(false);
+  const [pwOpen, setPwOpen] = useState(false);
+
+  useEffect(() => {
+    if (profile?.show_water_tracker == null) {
+      setShowWater(true);
+    } else {
+      setShowWater(Boolean(profile.show_water_tracker));
+    }
+  }, [profile?.show_water_tracker]);
+
+  const toggleWater = async () => {
+    if (!user) return;
+    const next = !showWater;
+    setShowWater(next);
+    setSavingWater(true);
+    const { error } = await supabase
+      .from('profiles')
+      .update({
+        show_water_tracker: next,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+    setSavingWater(false);
+    if (error) {
+      setShowWater(!next);
+      alert(
+        error.message.includes('show_water_tracker')
+          ? 'Kolom belum ada di database. Jalankan supabase/fix_show_water_tracker.sql di Supabase SQL Editor.'
+          : error.message || 'Gagal menyimpan pengaturan'
+      );
+      return;
+    }
+    await refreshProfile();
+  };
 
   return (
     <AppShell title="Pengaturan">
       <div className="px-4 pb-8 space-y-3 animate-fade-up">
+        <button
+          type="button"
+          onClick={() => setPwOpen(true)}
+          className="flex w-full items-center gap-3 rounded-2xl border border-[var(--border)] bg-white px-4 py-4 text-left"
+        >
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[var(--bg-soft)] text-[var(--brand)]">
+            <KeyRound size={18} />
+          </span>
+          <span className="flex-1">
+            <span className="block text-sm font-medium">Ganti password</span>
+            <span className="block text-xs text-[var(--muted)]">Perbarui kata sandi akun</span>
+          </span>
+          <ChevronRight size={18} className="text-[var(--muted)]" />
+        </button>
+
         <Link
           href="/account"
           className="block rounded-2xl border border-[var(--border)] bg-white px-4 py-4 text-sm font-medium"
@@ -28,6 +84,36 @@ export default function SettingsPage() {
         >
           Pengingat makan & air
         </Link>
+
+        <section
+          id="water"
+          className="rounded-2xl border border-[var(--border)] bg-white px-4 py-4 text-sm"
+        >
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="font-medium">Tampilkan air minum di Hari ini</p>
+              <p className="mt-1 text-xs text-[var(--muted)]">
+                Target & penghitung gelas di halaman Hari ini
+                {savingWater ? ' · menyimpan…' : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={showWater}
+              onClick={() => void toggleWater()}
+              className={`relative h-7 w-12 shrink-0 rounded-full transition ${
+                showWater ? 'bg-[var(--brand)]' : 'bg-[var(--border)]'
+              }`}
+            >
+              <span
+                className={`absolute top-0.5 h-6 w-6 rounded-full bg-white shadow transition ${
+                  showWater ? 'left-5' : 'left-0.5'
+                }`}
+              />
+            </button>
+          </div>
+        </section>
 
         <section className="rounded-2xl border border-[var(--border)] bg-white px-4 py-4 text-sm">
           <p className="font-medium">Pasang di HP (PWA)</p>
@@ -53,6 +139,10 @@ export default function SettingsPage() {
           Feedback & dukungan
         </a>
       </div>
+
+      {pwOpen && (
+        <ChangePasswordModal email={user?.email} onClose={() => setPwOpen(false)} />
+      )}
     </AppShell>
   );
 }

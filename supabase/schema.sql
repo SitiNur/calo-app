@@ -20,6 +20,7 @@ create table if not exists public.profiles (
   carbs_target_g integer,
   fat_target_g integer,
   water_goal_ml integer default 2000,
+  show_water_tracker boolean default true,
   profile_completed boolean default false,
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
@@ -169,7 +170,11 @@ begin
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data->>'full_name', ''),
+    coalesce(
+      new.raw_user_meta_data->>'full_name',
+      new.raw_user_meta_data->>'name',
+      ''
+    ),
     false
   );
   insert into public.reminder_settings (user_id)

@@ -25,13 +25,23 @@ Web app installable di HP untuk tracking kalori dengan UI chat. Input teks/foto 
 3. **Supabase**
    - Buat project baru di [supabase.com](https://supabase.com)
    - Jalankan SQL di [`supabase/schema.sql`](supabase/schema.sql) lewat SQL Editor
-   - Storage → buat bucket `food-photos` (public)
+   - Storage → buat bucket `food-photos` (public) atau jalankan [`supabase/storage.sql`](supabase/storage.sql)
    - Auth → Email provider aktif (disable confirm email di lokal jika ingin cepat uji)
 
-4. **Gemini**
+4. **Login Google**
+   1. [Google Cloud Console](https://console.cloud.google.com/) → buat OAuth Client ID (tipe **Web application**)
+   2. Authorized JavaScript origins: `http://localhost:3000` (+ domain production)
+   3. Authorized redirect URIs — **wajib URL Supabase** (bukan localhost app):
+      `https://<PROJECT_REF>.supabase.co/auth/v1/callback`
+   4. Supabase → **Authentication → Providers → Google** → Enable → paste Client ID & Secret
+   5. Supabase → **Authentication → URL Configuration**:
+      - Site URL: `http://localhost:3000`
+      - Redirect URLs: `http://localhost:3000/auth/callback` (+ URL production)
+
+5. **Gemini**
    - Ambil API key gratis di [Google AI Studio](https://aistudio.google.com/apikey)
 
-5. **Jalankan**
+6. **Jalankan**
    ```bash
    npm run dev
    ```

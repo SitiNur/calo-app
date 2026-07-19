@@ -62,12 +62,15 @@ export function calculateTargets(input: TdeeInput): TdeeResult {
   const bmr = calculateBmr(input.gender, input.weight, input.height, input.age);
   const tdee = calculateTdee(bmr, input.activityLevel);
 
-  const speed = Math.max(0, Math.min(1, input.targetSpeed || 0.5));
+  // Jangan pakai `|| 0.5` — nilai 0 valid (maintain / tanpa penyesuaian)
+  const rawSpeed = Number(input.targetSpeed);
+  const speed = Number.isFinite(rawSpeed) ? Math.max(0, Math.min(1, rawSpeed)) : 0.5;
   const dailyAdjust = Math.round((speed * 7700) / 7);
 
   let targetCalories = tdee;
   if (input.weightGoal === 'lose') {
     const floor = input.gender === 'male' ? 1500 : 1200;
+    // Defisit dari kecepatan; dibatasi minimum aman
     targetCalories = Math.max(floor, tdee - dailyAdjust);
   } else if (input.weightGoal === 'gain') {
     targetCalories = tdee + dailyAdjust;

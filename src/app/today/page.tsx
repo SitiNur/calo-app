@@ -109,7 +109,8 @@ export default function TodayPage() {
     if (!user || !profile) return;
     setBusy(true);
     try {
-      let imageUrl: string | null = null;
+      // Prefer Storage public URL; fall back to data URL so bubble always shows the photo
+      let imageUrl: string | null = payload.imageBase64 || null;
 
       if (payload.imageFile) {
         const ext = payload.imageFile.name.split('.').pop() || 'jpg';
@@ -117,28 +118,77 @@ export default function TodayPage() {
         const { error: upErr } = await supabase.storage
           .from('food-photos')
           .upload(path, payload.imageFile, { upsert: false });
-        if (!upErr) {
+        if (upErr) {
+          console.warn('[calo] food-photos upload failed — using inline preview', upErr.message);
+        } else {
           const { data: pub } = supabase.storage.from('food-photos').getPublicUrl(path);
           imageUrl = pub.publicUrl;
         }
       }
 
-      const { data: userMsg, error: userMsgErr } = await supabase
+      // Optimistic bubble so foto appears immediately even if insert is slow
+      const optimisticId = `tmp-${Date.now()}`;
+      const optimisticUser: ChatMessage = {
+        id: optimisticId,
+        user_id: user.id,
+        log_date: selectedKey,
+        sender: 'user',
+        message_text: payload.text,
+        image_url: imageUrl,
+        structured_data: null,
+        created_at: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, optimisticUser]);
+
+      let persistImageUrl = imageUrl;
+      // Data URL terlalu besar untuk DB — simpan null di server, preview tetap di UI
+      if (persistImageUrl && persistImageUrl.startsWith('data:') && persistImageUrl.length > 180_000) {
+        persistImageUrl = null;
+      }
+
+      let { data: userMsg, error: userMsgErr } = await supabase
         .from('chat_messages')
         .insert({
           user_id: user.id,
           log_date: selectedKey,
           sender: 'user',
           message_text: payload.text,
-          image_url: imageUrl,
+          image_url: persistImageUrl,
         })
         .select('*')
         .single();
 
-      if (userMsgErr) throw userMsgErr;
-      setMessages((prev) => [...prev, userMsg as ChatMessage]);
+      // Retry tanpa image_url jika kolom/storage menolak payload besar
+      if (userMsgErr && persistImageUrl) {
+        console.warn('[calo] chat insert with image failed, retrying text-only', userMsgErr.message);
+        const retry = await supabase
+          .from('chat_messages')
+          .insert({
+            user_id: user.id,
+            log_date: selectedKey,
+            sender: 'user',
+            message_text: payload.text,
+            image_url: null,
+          })
+          .select('*')
+          .single();
+        userMsg = retry.data;
+        userMsgErr = retry.error;
+      }
 
-      const history = [...messages, userMsg].map((m) => ({
+      if (userMsgErr || !userMsg) {
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId));
+        throw userMsgErr || new Error('Gagal menyimpan pesan');
+      }
+
+      // Keep local preview even if DB dropped the image_url
+      const savedUser: ChatMessage = {
+        ...(userMsg as ChatMessage),
+        image_url: (userMsg as ChatMessage).image_url || imageUrl,
+      };
+      setMessages((prev) => prev.map((m) => (m.id === optimisticId ? savedUser : m)));
+
+      const history = [...messages, savedUser].map((m) => ({
         sender: m.sender,
         message_text: m.message_text,
       }));
@@ -371,6 +421,31 @@ export default function TodayPage() {
     return newAsst as ChatMessage;
   };
 
+  const loadImageForRecalc = async (
+    imageUrl: string | null | undefined
+  ): Promise<{ image?: string; imageType?: string }> => {
+    if (!imageUrl) return {};
+    if (imageUrl.startsWith('data:')) {
+      const mime = imageUrl.slice(5, imageUrl.indexOf(';')) || 'image/jpeg';
+      return { image: imageUrl, imageType: mime };
+    }
+    try {
+      const res = await fetch(imageUrl);
+      if (!res.ok) return {};
+      const blob = await res.blob();
+      const dataUrl = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result || ''));
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+      });
+      return { image: dataUrl, imageType: blob.type || 'image/jpeg' };
+    } catch (err) {
+      console.warn('[calo] gagal muat foto untuk edit ulang', err);
+      return {};
+    }
+  };
+
   const handleEditUserMessage = async (
     userMsg: ChatMessage,
     assistantMsg: ChatMessage | undefined,
@@ -392,7 +467,7 @@ export default function TodayPage() {
       setMessages((prev) =>
         prev.map((m) =>
           m.id === userMsg.id
-            ? { ...m, ...(updatedUser || {}), message_text: newText }
+            ? { ...m, ...(updatedUser || {}), message_text: newText, image_url: m.image_url }
             : m
         )
       );
@@ -416,11 +491,14 @@ export default function TodayPage() {
         )
         .filter((h) => !/gagal memproses|GoogleGenerativeAI|kuota/i.test(h.message_text || ''));
 
+      const photo = await loadImageForRecalc(userMsg.image_url);
+
       const aiRes = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           message: newText,
+          ...photo,
           history,
           userProfile: profile,
           dayTotals: {
@@ -546,13 +624,26 @@ export default function TodayPage() {
     <AppShell title="Hari ini">
       <DateStrip selected={selected} onSelect={setSelected} loggedDates={loggedDates} />
       <MacroSummary totals={totals} profile={profile} streak={streak} />
-      <WaterTracker
-        cups={cups}
-        goalMl={profile?.water_goal_ml ?? 2000}
-        onChange={updateWater}
-      />
+      {profile?.show_water_tracker !== false && (
+        <div id="water">
+          <WaterTracker
+            cups={cups}
+            goalMl={profile?.water_goal_ml ?? 2000}
+            onChange={updateWater}
+          />
+        </div>
+      )}
 
-      <div ref={feedRef} className="flex-1 overflow-y-auto pb-4" style={{ maxHeight: 'calc(100dvh - 390px)' }}>
+      <div
+        ref={feedRef}
+        className="flex-1 overflow-y-auto pb-4"
+        style={{
+          maxHeight:
+            profile?.show_water_tracker === false
+              ? 'calc(100dvh - 320px)'
+              : 'calc(100dvh - 390px)',
+        }}
+      >
         {paired.length === 0 && (
           <div className="mx-6 mt-6 rounded-2xl border border-dashed border-[var(--border)] bg-white/60 px-4 py-8 text-center animate-fade-up">
             <p className="display-font text-lg font-semibold">Cerita ke Calo</p>
@@ -566,11 +657,15 @@ export default function TodayPage() {
             {pair.user && (
               <MealCard
                 message={pair.user}
-                onEditUserMessage={(text) =>
-                  handleEditUserMessage(pair.user!, pair.assistant, text)
+                onEditUserMessage={
+                  busy
+                    ? undefined
+                    : (text) => handleEditUserMessage(pair.user!, pair.assistant, text)
                 }
-                onDeleteUserMessage={() =>
-                  handleDeleteUserMessage(pair.user!, pair.assistant)
+                onDeleteUserMessage={
+                  busy
+                    ? undefined
+                    : () => handleDeleteUserMessage(pair.user!, pair.assistant)
                 }
               />
             )}

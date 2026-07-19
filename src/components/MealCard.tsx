@@ -146,15 +146,19 @@ export function MealCard({
   }, [editing]);
 
   const saveEdit = async () => {
+    if (!onEditUserMessage) return;
     const next = draft.trim();
-    if (!next || !onEditUserMessage) return;
+    // Allow re-save of same text only if nothing changed — just close
     if (next === (message.message_text || '').trim()) {
       setEditing(false);
       return;
     }
+    // Need some text to recalculate (photo-only: keep a placeholder caption)
+    const payload = next || (message.image_url ? 'Analisis ulang foto ini' : '');
+    if (!payload) return;
     setSaving(true);
     try {
-      await onEditUserMessage(next);
+      await onEditUserMessage(payload);
       setEditing(false);
     } catch {
       // parent handles alert
@@ -164,9 +168,10 @@ export function MealCard({
   };
 
   if (message.sender === 'user') {
+    const canSave = Boolean(draft.trim() || message.image_url);
     return (
       <div className="mx-4 mb-3 animate-fade-up">
-        <div className="group relative ml-8">
+        <div className="ml-8">
           <div className="rounded-2xl rounded-tr-md bg-[var(--brand)] px-4 py-3 text-sm text-white shadow-sm">
             {message.image_url && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -198,7 +203,7 @@ export function MealCard({
                     }
                   }}
                   rows={2}
-                  className="w-full resize-none bg-transparent text-sm leading-relaxed text-white outline-none placeholder:text-white/60"
+                  className="w-full resize-none rounded-lg bg-white/10 px-2 py-1.5 text-sm leading-relaxed text-white outline-none ring-1 ring-white/30 placeholder:text-white/60"
                   placeholder="Ubah catatan makanan…"
                 />
                 <div className="flex justify-end gap-1.5">
@@ -216,7 +221,7 @@ export function MealCard({
                   </button>
                   <button
                     type="button"
-                    disabled={saving || !draft.trim()}
+                    disabled={saving || !canSave}
                     aria-label="Simpan"
                     onClick={() => void saveEdit()}
                     className="rounded-full bg-white p-1.5 text-[var(--brand)] disabled:opacity-50"
@@ -229,35 +234,41 @@ export function MealCard({
                 )}
               </div>
             ) : (
-              message.message_text
+              <p className="whitespace-pre-wrap leading-relaxed">
+                {message.message_text || (message.image_url ? '📷 Foto makanan' : '')}
+              </p>
             )}
           </div>
-          {!editing && (onEditUserMessage || onDeleteUserMessage) && (
-            <div className="absolute -bottom-2 right-2 flex gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100">
-              {onEditUserMessage && (
-                <button
-                  type="button"
-                  aria-label="Edit chat"
-                  onClick={() => setEditing(true)}
-                  className="rounded-full bg-white p-1.5 text-[var(--brand)] shadow-md"
-                >
-                  <Pencil size={12} />
-                </button>
-              )}
-              {onDeleteUserMessage && (
-                <button
-                  type="button"
-                  aria-label="Hapus chat"
-                  onClick={() => void onDeleteUserMessage()}
-                  className="rounded-full bg-white p-1.5 text-[var(--miss)] shadow-md"
-                >
-                  <Trash2 size={12} />
-                </button>
-              )}
-            </div>
-          )}
+          <div className="mt-1.5 flex items-center justify-end gap-2">
+            {!editing && (onEditUserMessage || onDeleteUserMessage) && (
+              <div className="flex gap-1">
+                {onEditUserMessage && (
+                  <button
+                    type="button"
+                    aria-label="Edit chat"
+                    title="Edit & hitung ulang"
+                    onClick={() => setEditing(true)}
+                    className="rounded-full border border-[var(--border)] bg-white p-1.5 text-[var(--brand)] shadow-sm"
+                  >
+                    <Pencil size={13} />
+                  </button>
+                )}
+                {onDeleteUserMessage && (
+                  <button
+                    type="button"
+                    aria-label="Hapus chat"
+                    title="Hapus chat"
+                    onClick={() => void onDeleteUserMessage()}
+                    className="rounded-full border border-[var(--border)] bg-white p-1.5 text-[var(--miss)] shadow-sm"
+                  >
+                    <Trash2 size={13} />
+                  </button>
+                )}
+              </div>
+            )}
+            <p className="text-[10px] text-[var(--muted)]">{time}</p>
+          </div>
         </div>
-        <p className="mt-2 text-right text-[10px] text-[var(--muted)]">{time}</p>
       </div>
     );
   }

@@ -1,9 +1,10 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildNutritionPrompt, type DayContext, type ProfileContext } from '@/lib/ai-prompt';
-import { buildLocalReply, parseGeminiPayload } from '@/lib/ai-parse';
+import { buildLocalReply, parseGeminiPayload, stripMealTimeLabels } from '@/lib/ai-parse';
 import { estimateLocally, isParseComplete, refineWithLocalDb } from '@/lib/localEstimate';
 import { normalizeAiResponse } from '@/lib/nutrition';
+import type { AiResponse } from '@/lib/types';
 
 export const maxDuration = 60;
 
@@ -50,21 +51,57 @@ function buildUserVisionPrompt(message: string, hasImage: boolean): string {
   if (hasImage && isUsefulCaption(text)) {
     return `Ada FOTO makanan + teks penjelasan dari user.
 
-TEKS USER (prioritas untuk gram/cara masak/nama):
+TEKS USER (prioritas untuk kuantitas, cara masak, nama item, minuman yang mungkin tidak terlihat jelas):
 """${text}"""
 
 Instruksi:
-- Analisis foto: identifikasi semua item yang terlihat.
-- Hormati teks user untuk kuantitas & jenis (mis. "100g", "bakar tanpa minyak").
-- Item di foto yang tidak disebut di teks tetap dicatat dengan estimasi porsi realistis.
+- Analisis foto: ukuran/porsi item yang terlihat (mis. 1 risol + sendok sebagai skala).
+- Hormati teks user untuk jumlah & cara masak (mis. "2 buah", "ga digoreng", "air fryer").
+- Item di teks yang tidak terlihat di foto (mis. "minum flimeal") TETAP dicatat.
+- JANGAN menyebut makan pagi/siang/malam kecuali user menulisnya.
+- Sisa kalori di pesan: hitung dari PROGRESS HARI INI (sisa sebelum input − total makanan baru + olahraga baru).
 - Return JSON sesuai format wajib.`;
   }
   if (hasImage) {
     return `Analisis FOTO makanan/minuman ini.
 Identifikasi setiap item, estimasi porsi realistis Indonesia, hitung kalori + makro dari tabel gizi.
-Sebutkan asumsi porsi di "serving". Return JSON sesuai format wajib.`;
+Sebutkan asumsi porsi di "serving".
+JANGAN menyebut makan pagi/siang/malam.
+Return JSON sesuai format wajib.`;
   }
   return text || 'Cerita aja mau makan apa — aku bantu hitung kalorinya.';
+}
+
+/** Always rewrite food/exercise replies so "sisa kalori" matches MacroSummary math. */
+function withSyncedAppReply(
+  parsed: AiResponse,
+  day: DayContext | undefined,
+  profile: ProfileContext | undefined
+): AiResponse {
+  const normalized = normalizeAiResponse(parsed);
+  const foodTotal = (normalized.foodItems || []).reduce((s, f) => s + f.calories, 0);
+  const exTotal = (normalized.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0);
+
+  if (normalized.type === 'chat' || (!foodTotal && !exTotal)) {
+    return {
+      ...normalized,
+      reply: stripMealTimeLabels(normalized.reply || ''),
+    };
+  }
+
+  const remainingBefore = day?.remaining ?? profile?.target_calories ?? 2000;
+  const remainingAfter =
+    normalized.type === 'exercise' ? remainingBefore + exTotal : remainingBefore - foodTotal;
+
+  return {
+    ...normalized,
+    reply: buildLocalReply(
+      normalized.type === 'exercise' ? 'exercise' : 'food',
+      normalized.type === 'exercise' ? exTotal : foodTotal,
+      remainingAfter,
+      profile?.full_name || undefined
+    ),
+  };
 }
 
 async function generateWithGemini(
@@ -182,20 +219,8 @@ export async function POST(req: NextRequest) {
       ((localFirst.foodItems?.length || 0) > 0 || (localFirst.exerciseItems?.length || 0) > 0);
 
     if (localParsedWell) {
-      const foodTotal = (localFirst.foodItems || []).reduce((s, f) => s + f.calories, 0);
-      const exTotal = (localFirst.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0);
-      const delta = localFirst.type === 'exercise' ? -exTotal : foodTotal;
-      const remainingAfter = (day?.remaining ?? profile?.target_calories ?? 2000) - delta;
-
-      const reply = buildLocalReply(
-        localFirst.type === 'exercise' ? 'exercise' : 'food',
-        localFirst.type === 'exercise' ? exTotal : foodTotal,
-        remainingAfter,
-        profile?.full_name || undefined
-      );
-
       return NextResponse.json({
-        ...normalizeAiResponse({ ...localFirst, reply }),
+        ...withSyncedAppReply(localFirst, day, profile),
         source: 'local-db',
       });
     }
@@ -228,36 +253,43 @@ export async function POST(req: NextRequest) {
             source: 'local',
           });
         }
-        const foodTotal = (fallback.foodItems || []).reduce((s, f) => s + f.calories, 0);
-        const remainingAfter =
-          (day?.remaining ?? profile?.target_calories ?? 2000) -
-          (fallback.type === 'exercise'
-            ? -(fallback.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0)
-            : foodTotal);
-        parsed = normalizeAiResponse({
-          ...fallback,
-          reply: buildLocalReply(
-            fallback.type === 'exercise' ? 'exercise' : 'food',
-            fallback.type === 'exercise'
-              ? (fallback.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0)
-              : foodTotal,
-            remainingAfter,
-            profile?.full_name || undefined
-          ),
+        return NextResponse.json({
+          ...withSyncedAppReply(fallback, day, profile),
+          source: 'local-db',
         });
-        return NextResponse.json({ ...parsed, source: 'local-db' });
       }
 
-      // Jangan timpa hasil vision dengan parser teks lokal
+      // Foto + caption lengkap di DB lokal → pakai angka tabel (lebih konsisten, acuan Gemini chat)
+      if (hasImage && isUsefulCaption(message || '')) {
+        const localCaption = estimateLocally(message || '', weight);
+        if (
+          isParseComplete(message || '', localCaption) &&
+          (localCaption.foodItems?.length || localCaption.exerciseItems?.length)
+        ) {
+          return NextResponse.json({
+            ...withSyncedAppReply(localCaption, day, profile),
+            source: 'local-db',
+          });
+        }
+        // Caption belum lengkap di DB — pakai vision, tapi sisa kalori selalu dari app
+        return NextResponse.json({
+          ...withSyncedAppReply(parsed, day, profile),
+          source: 'gemini',
+        });
+      }
+
       if (hasImage) {
         return NextResponse.json({
-          ...normalizeAiResponse(parsed),
+          ...withSyncedAppReply(parsed, day, profile),
           source: 'gemini',
         });
       }
 
       const refined = refineWithLocalDb(parsed, message || '', weight);
-      return NextResponse.json(refined);
+      return NextResponse.json({
+        ...withSyncedAppReply(refined, day, profile),
+        source: refined.source || 'gemini',
+      });
     } catch (error) {
       console.warn('[calo/chat] falling back to local estimate', error);
       const local = estimateLocally(message || '', weight);
@@ -275,23 +307,9 @@ export async function POST(req: NextRequest) {
         });
       }
 
-      const foodTotal = (local.foodItems || []).reduce((s, f) => s + f.calories, 0);
-      const exTotal = (local.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0);
-      const remainingAfter =
-        (day?.remaining ?? profile?.target_calories ?? 2000) -
-        (local.type === 'exercise' ? -exTotal : foodTotal);
-
       return NextResponse.json({
-        ...normalizeAiResponse({
-          ...local,
-          reply: buildLocalReply(
-            local.type === 'exercise' ? 'exercise' : 'food',
-            local.type === 'exercise' ? exTotal : foodTotal,
-            remainingAfter,
-            profile?.full_name || undefined
-          ),
-        }),
-        source: hasImage ? 'gemini' : 'local',
+        ...withSyncedAppReply(local, day, profile),
+        source: 'local',
       });
     }
   } catch (error: unknown) {
