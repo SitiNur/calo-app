@@ -7,6 +7,7 @@ import { AppShell } from '@/components/AppShell';
 import { ChangePasswordModal } from '@/components/ChangePasswordModal';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
+import { getShowWaterTracker, setShowWaterTrackerLocal } from '@/lib/preferences';
 
 export default function SettingsPage() {
   const { user, profile, refreshProfile } = useAuth();
@@ -16,17 +17,14 @@ export default function SettingsPage() {
   const [pwOpen, setPwOpen] = useState(false);
 
   useEffect(() => {
-    if (profile?.show_water_tracker == null) {
-      setShowWater(true);
-    } else {
-      setShowWater(Boolean(profile.show_water_tracker));
-    }
-  }, [profile?.show_water_tracker]);
+    setShowWater(getShowWaterTracker(user?.id, profile?.show_water_tracker));
+  }, [user?.id, profile?.show_water_tracker]);
 
   const toggleWater = async () => {
     if (!user) return;
     const next = !showWater;
     setShowWater(next);
+    setShowWaterTrackerLocal(user.id, next);
     setSavingWater(true);
     const { error } = await supabase
       .from('profiles')
@@ -37,12 +35,10 @@ export default function SettingsPage() {
       .eq('id', user.id);
     setSavingWater(false);
     if (error) {
-      setShowWater(!next);
-      alert(
-        error.message.includes('show_water_tracker')
-          ? 'Kolom belum ada di database. Jalankan supabase/fix_show_water_tracker.sql di Supabase SQL Editor.'
-          : error.message || 'Gagal menyimpan pengaturan'
-      );
+      // Tetap pakai localStorage supaya toggle tetap berfungsi tanpa kolom DB
+      if (!/show_water_tracker|column/i.test(error.message)) {
+        console.warn('[calo] simpan preferensi air ke DB gagal', error.message);
+      }
       return;
     }
     await refreshProfile();

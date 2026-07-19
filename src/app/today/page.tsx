@@ -10,6 +10,7 @@ import { Composer } from '@/components/Composer';
 import { useAuth } from '@/contexts/AuthContext';
 import { createClient } from '@/lib/supabase/client';
 import { computeDayTotals, computeStreak, dateKey, ML_PER_CUP } from '@/lib/calories';
+import { getShowWaterTracker } from '@/lib/preferences';
 import type { AiResponse, CalorieLog, ChatMessage, DayTotals, Profile } from '@/lib/types';
 
 function dayTotalsFromLogs(dayLogs: CalorieLog[], profile: Profile | null): DayTotals {
@@ -620,67 +621,67 @@ export default function TodayPage() {
     return list;
   }, [messages]);
 
+  const [showWater, setShowWater] = useState(true);
+  useEffect(() => {
+    setShowWater(getShowWaterTracker(user?.id, profile?.show_water_tracker));
+  }, [user?.id, profile?.show_water_tracker]);
+
   return (
     <AppShell title="Hari ini">
-      <DateStrip selected={selected} onSelect={setSelected} loggedDates={loggedDates} />
-      <MacroSummary totals={totals} profile={profile} streak={streak} />
-      {profile?.show_water_tracker !== false && (
-        <div id="water">
-          <WaterTracker
-            cups={cups}
-            goalMl={profile?.water_goal_ml ?? 2000}
-            onChange={updateWater}
-          />
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="shrink-0">
+          <DateStrip selected={selected} onSelect={setSelected} loggedDates={loggedDates} />
+          <MacroSummary totals={totals} profile={profile} streak={streak} />
+          {showWater && (
+            <div id="water">
+              <WaterTracker
+                cups={cups}
+                goalMl={profile?.water_goal_ml ?? 2000}
+                onChange={updateWater}
+              />
+            </div>
+          )}
         </div>
-      )}
 
-      <div
-        ref={feedRef}
-        className="flex-1 overflow-y-auto pb-4"
-        style={{
-          maxHeight:
-            profile?.show_water_tracker === false
-              ? 'calc(100dvh - 320px)'
-              : 'calc(100dvh - 390px)',
-        }}
-      >
-        {paired.length === 0 && (
-          <div className="mx-6 mt-6 rounded-2xl border border-dashed border-[var(--border)] bg-white/60 px-4 py-8 text-center animate-fade-up">
-            <p className="display-font text-lg font-semibold">Cerita ke Calo</p>
-            <p className="mt-2 text-sm text-[var(--muted)]">
-              Tulis seperti chat biasa — “nasi padang + es teh” atau kirim foto piringmu.
-            </p>
-          </div>
-        )}
-        {paired.map((pair, idx) => (
-          <div key={pair.user?.id || pair.assistant?.id || idx}>
-            {pair.user && (
-              <MealCard
-                message={pair.user}
-                onEditUserMessage={
-                  busy
-                    ? undefined
-                    : (text) => handleEditUserMessage(pair.user!, pair.assistant, text)
-                }
-                onDeleteUserMessage={
-                  busy
-                    ? undefined
-                    : () => handleDeleteUserMessage(pair.user!, pair.assistant)
-                }
-              />
-            )}
-            {pair.assistant && (
-              <MealCard
-                message={pair.assistant}
-                userText={pair.user?.message_text || undefined}
-                logs={logsByMessage.get(pair.assistant.id) || []}
-              />
-            )}
-          </div>
-        ))}
+        <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3">
+          {paired.length === 0 && (
+            <div className="mx-4 mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-white/60 px-4 py-8 text-center animate-fade-up">
+              <p className="display-font text-lg font-semibold">Cerita ke Calo</p>
+              <p className="mt-2 text-sm text-[var(--muted)]">
+                Tulis seperti chat biasa — “nasi padang + es teh” atau kirim foto piringmu.
+              </p>
+            </div>
+          )}
+          {paired.map((pair, idx) => (
+            <div key={pair.user?.id || pair.assistant?.id || idx}>
+              {pair.user && (
+                <MealCard
+                  message={pair.user}
+                  onEditUserMessage={
+                    busy
+                      ? undefined
+                      : (text) => handleEditUserMessage(pair.user!, pair.assistant, text)
+                  }
+                  onDeleteUserMessage={
+                    busy
+                      ? undefined
+                      : () => handleDeleteUserMessage(pair.user!, pair.assistant)
+                  }
+                />
+              )}
+              {pair.assistant && (
+                <MealCard
+                  message={pair.assistant}
+                  userText={pair.user?.message_text || undefined}
+                  logs={logsByMessage.get(pair.assistant.id) || []}
+                />
+              )}
+            </div>
+          ))}
+        </div>
+
+        <Composer onSend={handleSend} disabled={busy} />
       </div>
-
-      <Composer onSend={handleSend} disabled={busy} />
     </AppShell>
   );
 }

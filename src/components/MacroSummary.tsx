@@ -61,7 +61,7 @@ export function MacroSummary({
       {page === 0 ? (
         <div className="flex items-end justify-between gap-4">
           <div>
-            <p className="display-font text-5xl font-semibold leading-none tracking-tight">
+            <p className="display-font text-4xl font-semibold leading-none tracking-tight sm:text-5xl">
               {totals.remaining}
             </p>
             <p className="mt-2 text-sm text-[var(--muted)]">kcal tersisa hari ini</p>

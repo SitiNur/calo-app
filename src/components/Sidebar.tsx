@@ -7,7 +7,6 @@ import {
   BarChart3,
   Scale,
   Bell,
-  Droplets,
   User,
   Settings,
   LogOut,
@@ -21,7 +20,6 @@ const links = [
   { href: '/weekly', label: 'Ringkasan', icon: BarChart3 },
   { href: '/weight', label: 'Pelacak Berat', icon: Scale },
   { href: '/reminders', label: 'Pengingat', icon: Bell },
-  { href: '/settings#water', label: 'Air Minum', icon: Droplets },
   { href: '/account', label: 'Akun', icon: User },
   { href: '/settings', label: 'Pengaturan', icon: Settings },
 ];

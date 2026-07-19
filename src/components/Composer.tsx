@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { Camera, ImageIcon, Send, Loader2, X } from 'lucide-react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Camera, ImageIcon, Loader2, X } from 'lucide-react';
 
 type PendingImage = {
   file: File;
@@ -9,6 +9,10 @@ type PendingImage = {
   base64: string;
   type: string;
 };
+
+const MAX_TEXTAREA_PX = 96;
+const PLACEHOLDER =
+  'Apa yang kamu makan atau olahraga apa yang kamu lakukan?';
 
 export function Composer({
   onSend,
@@ -34,6 +38,13 @@ export function Composer({
       if (pending?.previewUrl) URL.revokeObjectURL(pending.previewUrl);
     };
   }, [pending?.previewUrl]);
+
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_TEXTAREA_PX)}px`;
+  }, [text]);
 
   const readFile = (file: File) =>
     new Promise<{ base64: string; type: string }>((resolve, reject) => {
@@ -67,7 +78,6 @@ export function Composer({
           type,
         };
       });
-      // Biarkan user menulis penjelasan setelah pilih foto
       requestAnimationFrame(() => textareaRef.current?.focus());
     } catch (err) {
       console.error('Gagal baca foto', err);
@@ -80,7 +90,6 @@ export function Composer({
     if (!message && !pending) return;
     setSending(true);
     try {
-      // Teks di bubble: caption user, atau label singkat jika foto saja
       const caption = message || (pending ? 'Foto makanan' : '');
       await onSend({
         text: caption,
@@ -98,7 +107,7 @@ export function Composer({
   const canSend = Boolean(text.trim() || pending);
 
   return (
-    <div className="safe-bottom border-t border-[var(--border)] bg-white/95 px-3 pt-3 backdrop-blur">
+    <div className="safe-bottom shrink-0 border-t border-[var(--border)] bg-white/95 px-3 pt-2.5 backdrop-blur">
       {pending && (
         <div className="mb-2 flex items-start gap-2 animate-fade-up">
           <div className="relative">
@@ -119,43 +128,34 @@ export function Composer({
             </button>
           </div>
           <p className="flex-1 pt-1 text-xs leading-relaxed text-[var(--muted)]">
-            Foto siap. Tulis penjelasan (opsional), contoh: &ldquo;nasi 150g + ayam bakar tanpa kulit&rdquo;,
-            lalu kirim.
+            Foto siap. Tulis penjelasan (opsional), lalu kirim.
           </p>
         </div>
       )}
 
-      <div className="flex items-end gap-2">
-        <div className="flex flex-1 items-end gap-2 rounded-full border border-[var(--border)] bg-[var(--bg)] px-3 py-2">
-          <textarea
-            ref={textareaRef}
-            rows={1}
-            value={text}
-            disabled={disabled || sending}
-            onChange={(e) => {
-              setText(e.target.value);
-              e.target.style.height = 'auto';
-              e.target.style.height = `${Math.min(e.target.scrollHeight, 112)}px`;
-            }}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={
-              pending
-                ? 'Jelaskan isi fotonya (opsional)…'
-                : 'Apa yang kamu makan atau olahraga?'
+      <div className="flex items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5">
+        <textarea
+          ref={textareaRef}
+          rows={1}
+          value={text}
+          disabled={disabled || sending}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              void submit();
             }
-            className="max-h-28 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none placeholder:text-[var(--muted)]"
-          />
+          }}
+          placeholder={pending ? 'Jelaskan isi fotonya (opsional)…' : PLACEHOLDER}
+          className="max-h-24 min-h-[40px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-sm leading-5 outline-none placeholder:text-[var(--muted)]"
+        />
+        <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
           <button
             type="button"
             aria-label="Galeri"
             disabled={disabled || sending}
             onClick={() => galleryRef.current?.click()}
-            className={`p-1.5 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
+            className={`rounded-lg p-2 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
           >
             <ImageIcon size={20} />
           </button>
@@ -164,19 +164,19 @@ export function Composer({
             aria-label="Kamera"
             disabled={disabled || sending}
             onClick={() => cameraRef.current?.click()}
-            className={`p-1.5 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
+            className={`rounded-lg p-2 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
           >
             <Camera size={20} />
           </button>
+          <button
+            type="button"
+            disabled={disabled || sending || !canSend}
+            onClick={() => void submit()}
+            className="rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+          >
+            {sending ? <Loader2 size={14} className="animate-spin" /> : 'Kirim'}
+          </button>
         </div>
-        <button
-          type="button"
-          disabled={disabled || sending || !canSend}
-          onClick={() => void submit()}
-          className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[var(--brand)] text-white disabled:opacity-40"
-        >
-          {sending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-        </button>
       </div>
       <input
         ref={galleryRef}
