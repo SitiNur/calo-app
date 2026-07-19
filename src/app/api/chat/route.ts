@@ -39,6 +39,34 @@ async function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   }
 }
 
+function isUsefulCaption(text: string): boolean {
+  const t = text.trim();
+  if (t.length < 3) return false;
+  return !/^(analisis foto|foto makanan|📷|photo)/i.test(t);
+}
+
+function buildUserVisionPrompt(message: string, hasImage: boolean): string {
+  const text = (message || '').trim();
+  if (hasImage && isUsefulCaption(text)) {
+    return `Ada FOTO makanan + teks penjelasan dari user.
+
+TEKS USER (prioritas untuk gram/cara masak/nama):
+"""${text}"""
+
+Instruksi:
+- Analisis foto: identifikasi semua item yang terlihat.
+- Hormati teks user untuk kuantitas & jenis (mis. "100g", "bakar tanpa minyak").
+- Item di foto yang tidak disebut di teks tetap dicatat dengan estimasi porsi realistis.
+- Return JSON sesuai format wajib.`;
+  }
+  if (hasImage) {
+    return `Analisis FOTO makanan/minuman ini.
+Identifikasi setiap item, estimasi porsi realistis Indonesia, hitung kalori + makro dari tabel gizi.
+Sebutkan asumsi porsi di "serving". Return JSON sesuai format wajib.`;
+  }
+  return text || 'Cerita aja mau makan apa — aku bantu hitung kalorinya.';
+}
+
 async function generateWithGemini(
   message: string,
   image: string | undefined,
@@ -51,6 +79,7 @@ async function generateWithGemini(
 
   const genAI = new GoogleGenerativeAI(apiKey);
   const systemInstruction = buildNutritionPrompt(profile, day);
+  const hasImage = Boolean(image);
 
   type ContentPart = { text: string } | { inlineData: { data: string; mimeType: string } };
   const contents: Array<{ role: string; parts: ContentPart[] }> = [];
@@ -64,12 +93,9 @@ async function generateWithGemini(
     }
   }
 
-  const currentParts: ContentPart[] = [
-    {
-      text: `${systemInstruction}\n\n---\nINPUT PENGGUNA SAAT INI:\n${message || 'Analisis gambar makanan/olahraga ini dan catat estimasi gizinya.'}`,
-    },
-  ];
+  const currentParts: ContentPart[] = [];
 
+  // Image first helps vision models ground analysis, then caption/text
   if (image) {
     const base64Data = String(image).includes(',') ? String(image).split(',')[1] : String(image);
     currentParts.push({
@@ -80,21 +106,26 @@ async function generateWithGemini(
     });
   }
 
+  currentParts.push({
+    text: `${systemInstruction}\n\n---\nINPUT PENGGUNA SAAT INI:\n${buildUserVisionPrompt(message, hasImage)}`,
+  });
+
   contents.push({ role: 'user', parts: currentParts });
 
   let lastError: unknown;
+  const timeoutMs = hasImage ? 40000 : 25000;
 
   for (const modelName of MODEL_CANDIDATES) {
     const model = genAI.getGenerativeModel({
       model: modelName,
       generationConfig: {
-        temperature: 0.15,
+        temperature: hasImage ? 0.1 : 0.15,
         responseMimeType: 'application/json',
       },
     });
 
     try {
-      const result = await withTimeout(model.generateContent({ contents }), 25000);
+      const result = await withTimeout(model.generateContent({ contents }), timeoutMs);
       return result.response.text();
     } catch (error) {
       lastError = error;
@@ -141,10 +172,12 @@ export async function POST(req: NextRequest) {
     const weight = Number(userProfile?.weight) || 70;
     const profile = userProfile as ProfileContext | undefined;
     const day = buildDayContext(profile, dayTotals);
+    const hasImage = Boolean(image);
 
+    // Text-only path can use local DB. Photos always go to vision model.
     const localFirst = estimateLocally(message || '', weight);
     const localParsedWell =
-      !image &&
+      !hasImage &&
       isParseComplete(message || '', localFirst) &&
       ((localFirst.foodItems?.length || 0) > 0 || (localFirst.exerciseItems?.length || 0) > 0);
 
@@ -181,7 +214,20 @@ export async function POST(req: NextRequest) {
       try {
         parsed = parseGeminiPayload(JSON.parse(responseText));
       } catch {
+        // Vision JSON parse failed — if user wrote a caption, try local text parse
         const fallback = estimateLocally(message || '', weight);
+        if (hasImage && !(fallback.foodItems?.length || fallback.exerciseItems?.length)) {
+          return NextResponse.json({
+            ...normalizeAiResponse({
+              type: 'chat',
+              reply:
+                'Foto sudah diterima, tapi aku belum yakin isi piringnya. Coba tulis penjelasan singkat, contoh: "nasi 150g + ayam bakar + sayur".',
+              foodItems: [],
+              exerciseItems: [],
+            }),
+            source: 'local',
+          });
+        }
         const foodTotal = (fallback.foodItems || []).reduce((s, f) => s + f.calories, 0);
         const remainingAfter =
           (day?.remaining ?? profile?.target_calories ?? 2000) -
@@ -202,18 +248,26 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ ...parsed, source: 'local-db' });
       }
 
+      // Jangan timpa hasil vision dengan parser teks lokal
+      if (hasImage) {
+        return NextResponse.json({
+          ...normalizeAiResponse(parsed),
+          source: 'gemini',
+        });
+      }
+
       const refined = refineWithLocalDb(parsed, message || '', weight);
       return NextResponse.json(refined);
     } catch (error) {
       console.warn('[calo/chat] falling back to local estimate', error);
       const local = estimateLocally(message || '', weight);
 
-      if (image && !(message || '').trim()) {
+      if (hasImage && !(local.foodItems?.length || local.exerciseItems?.length)) {
         return NextResponse.json({
           ...normalizeAiResponse({
             type: 'chat',
             reply:
-              'Aku belum bisa analisis foto saat ini. Coba tulis makananmu, contoh: "nasi putih 150g + 1 telur rebus". Kamu pasti bisa konsisten hari ini!',
+              'Aku belum bisa analisis foto saat ini. Tulis isi makanannya ya, contoh: "nasi putih 150g + 1 telur rebus + tempe".',
             foodItems: [],
             exerciseItems: [],
           }),
@@ -237,7 +291,7 @@ export async function POST(req: NextRequest) {
             profile?.full_name || undefined
           ),
         }),
-        source: 'local',
+        source: hasImage ? 'gemini' : 'local',
       });
     }
   } catch (error: unknown) {

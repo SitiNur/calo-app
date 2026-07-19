@@ -80,6 +80,15 @@ ${dayBlock}
     - Jangan hitung seolah-olah 100g ayam goreng penuh + keju penuh + roti slice.
 12. "tepung roti" = coating breadcrumbs, BUKAN 1 slice roti tawar.
 
+### ANALISIS FOTO (jika ada gambar):
+1. Identifikasi SETIAP makanan/minuman yang terlihat di piring/foto — jangan lewatkan lauk samping.
+2. Estimasi porsi realistis Indonesia (sendok makan, potongan, seperempat piring, dll.).
+3. Jika user juga menulis teks penjelasan: TEKS USER = prioritas untuk nama, gram, dan cara masak. Foto dipakai untuk melengkapi item yang tidak disebut.
+   Contoh: foto nasi + ayam, teks "nasi 100g + dada ayam bakar tanpa kulit" → ikut teks untuk gram/cara masak.
+4. Cantumkan asumsi porsi di field "serving" (mis. "~150g", "1 potong sedang").
+5. Jangan overestimate gorengan/saus. Lebih baik sedikit underestimate daripada terlalu tinggi.
+6. Olahraga di foto jarang — hanya catat exercise jika jelas aktivitas olahraga.
+
 ### TABEL REFERENSI (pakai angka ini; skalakan ke porsi):
 | Bahan | Basis | kcal | Protein | Karbo | Lemak |
 | Putih telur | 100g | 52 | 10.9 | 0.7 | 0.2 |
