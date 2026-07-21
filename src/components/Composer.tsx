@@ -10,7 +10,7 @@ type PendingImage = {
   type: string;
 };
 
-const MAX_TEXTAREA_PX = 96;
+const MAX_TEXTAREA_PX = 64;
 const PLACEHOLDER =
   'Apa yang kamu makan atau olahraga apa yang kamu lakukan?';
 
@@ -107,33 +107,33 @@ export function Composer({
   const canSend = Boolean(text.trim() || pending);
 
   return (
-    <div className="safe-bottom shrink-0 border-t border-[var(--border)] bg-white/95 px-3 pt-2.5 backdrop-blur">
+    <div className="safe-bottom shrink-0 border-t border-[var(--border)] bg-white/95 px-2 pt-1.5 backdrop-blur">
       {pending && (
-        <div className="mb-2 flex items-start gap-2 animate-fade-up">
+        <div className="mb-1.5 flex items-start gap-2 animate-fade-up">
           <div className="relative">
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={pending.previewUrl}
               alt="Preview foto"
-              className="h-20 w-20 rounded-xl object-cover border border-[var(--border)]"
+              className="h-14 w-14 rounded-lg object-cover border border-[var(--border)]"
             />
             <button
               type="button"
               aria-label="Hapus foto"
               disabled={sending}
               onClick={clearPending}
-              className="absolute -right-1.5 -top-1.5 rounded-full bg-[var(--ink)] p-1 text-white shadow"
+              className="absolute -right-1 -top-1 rounded-full bg-[var(--ink)] p-0.5 text-white shadow"
             >
-              <X size={12} />
+              <X size={10} />
             </button>
           </div>
-          <p className="flex-1 pt-1 text-xs leading-relaxed text-[var(--muted)]">
+          <p className="flex-1 pt-0.5 text-[11px] leading-snug text-[var(--muted)]">
             Foto siap. Tulis penjelasan (opsional), lalu kirim.
           </p>
         </div>
       )}
 
-      <div className="flex items-end gap-2 rounded-2xl border border-[var(--border)] bg-[var(--bg)] px-2.5 py-1.5">
+      <div className="flex items-end gap-1.5 rounded-xl border border-[var(--border)] bg-[var(--bg)] px-2 py-1">
         <textarea
           ref={textareaRef}
           rows={1}
@@ -147,34 +147,34 @@ export function Composer({
             }
           }}
           placeholder={pending ? 'Jelaskan isi fotonya (opsional)…' : PLACEHOLDER}
-          className="max-h-24 min-h-[40px] flex-1 resize-none overflow-y-auto bg-transparent py-2 text-sm leading-5 outline-none placeholder:text-[var(--muted)]"
+          className="max-h-16 min-h-[32px] flex-1 resize-none overflow-y-auto bg-transparent py-1.5 text-[13px] leading-4 outline-none placeholder:text-[var(--muted)]"
         />
-        <div className="flex shrink-0 items-center gap-0.5 pb-0.5">
+        <div className="flex shrink-0 items-center gap-px pb-px">
           <button
             type="button"
             aria-label="Galeri"
             disabled={disabled || sending}
             onClick={() => galleryRef.current?.click()}
-            className={`rounded-lg p-2 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
+            className={`rounded-md p-1.5 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
           >
-            <ImageIcon size={20} />
+            <ImageIcon size={16} />
           </button>
           <button
             type="button"
             aria-label="Kamera"
             disabled={disabled || sending}
             onClick={() => cameraRef.current?.click()}
-            className={`rounded-lg p-2 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
+            className={`rounded-md p-1.5 ${pending ? 'text-[var(--brand)]' : 'text-[var(--muted)]'}`}
           >
-            <Camera size={20} />
+            <Camera size={16} />
           </button>
           <button
             type="button"
             disabled={disabled || sending || !canSend}
             onClick={() => void submit()}
-            className="rounded-xl bg-[var(--brand)] px-3 py-2 text-xs font-semibold text-white disabled:opacity-40"
+            className="rounded-lg bg-[var(--brand)] px-2.5 py-1.5 text-[11px] font-semibold text-white disabled:opacity-40"
           >
-            {sending ? <Loader2 size={14} className="animate-spin" /> : 'Kirim'}
+            {sending ? <Loader2 size={12} className="animate-spin" /> : 'Kirim'}
           </button>
         </div>
       </div>

@@ -70,11 +70,22 @@ function fromNutritionFormat(payload: GeminiNutritionPayload): Partial<AiRespons
   }
 
   if (updateType === 'exercise') {
-    const exerciseItems: ExerciseItem[] = items.map((item) => ({
-      name: item.name || 'Olahraga',
-      caloriesBurned: Math.round(Number(item.calories) || 0),
-      durationMinutes: Math.round(Number(item.duration_minutes) || 30),
-    }));
+    const exerciseItems: ExerciseItem[] = items.map((item) => {
+      const raw = item as {
+        name?: string;
+        calories?: number;
+        caloriesBurned?: number;
+        duration_minutes?: number;
+      };
+      const burned = Math.round(
+        Number(raw.caloriesBurned ?? raw.calories) || 0
+      );
+      return {
+        name: raw.name || 'Olahraga',
+        caloriesBurned: burned,
+        durationMinutes: Math.round(Number(raw.duration_minutes) || 30),
+      };
+    });
     const total = exerciseItems.reduce((s, e) => s + e.caloriesBurned, 0);
     return {
       type: 'exercise',

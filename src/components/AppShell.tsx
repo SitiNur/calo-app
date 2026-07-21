@@ -63,23 +63,23 @@ export function AppShell({
         }}
         name={profile?.full_name || 'Pengguna'}
       />
-      <header className="flex items-center gap-3 px-4 pt-4 pb-2">
+      <header className="flex items-center gap-2 px-3 pt-2.5 pb-1">
         <button
           type="button"
           aria-label="Menu"
           onClick={() => setDrawerOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/80 border border-[var(--border)]"
+          className="flex h-8 w-8 items-center justify-center rounded-lg bg-white/80 border border-[var(--border)]"
         >
-          <span className="flex flex-col gap-1.5">
-            <span className="block h-0.5 w-4 bg-[var(--ink)]" />
-            <span className="block h-0.5 w-4 bg-[var(--ink)]" />
-            <span className="block h-0.5 w-3 bg-[var(--ink)]" />
+          <span className="flex flex-col gap-1">
+            <span className="block h-0.5 w-3.5 bg-[var(--ink)]" />
+            <span className="block h-0.5 w-3.5 bg-[var(--ink)]" />
+            <span className="block h-0.5 w-2.5 bg-[var(--ink)]" />
           </span>
         </button>
         <div className="flex-1 text-center">
-          <p className="display-font text-lg font-semibold tracking-tight">{title || 'Hari ini'}</p>
+          <p className="display-font text-base font-semibold tracking-tight">{title || 'Hari ini'}</p>
         </div>
-        <div className="w-10" />
+        <div className="w-8" />
       </header>
       <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
       <InstallPrompt />

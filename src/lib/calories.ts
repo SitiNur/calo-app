@@ -74,4 +74,34 @@ export function dayStatus(
   return 'neutral';
 }
 
+/** Status kalori harian untuk strip tanggal (abaikan selected). */
+export type DayCalorieTone = 'today' | 'ok' | 'over' | 'missed' | 'future' | 'neutral';
+
+export function dayCalorieTone(
+  date: Date,
+  dayNets: Record<string, number>,
+  target: number
+): DayCalorieTone {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const d = new Date(date);
+  d.setHours(0, 0, 0, 0);
+  if (d > today) return 'future';
+
+  const key = dateKey(date);
+  const hasData = Object.prototype.hasOwnProperty.call(dayNets, key);
+  const isToday = d.getTime() === today.getTime();
+
+  if (!hasData) {
+    if (isToday) return 'today';
+    if (d < today) return 'missed';
+    return 'neutral';
+  }
+
+  const net = dayNets[key];
+  if (net > target) return 'over';
+  if (isToday) return 'today';
+  return 'ok';
+}
+
 export const ML_PER_CUP = 250;

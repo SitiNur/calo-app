@@ -2,6 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 import { createClient, hasSupabaseConfig } from '@/lib/supabase/client';
 
 function GoogleIcon({ className }: { className?: string }) {
@@ -30,6 +31,7 @@ function GoogleIcon({ className }: { className?: string }) {
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { authError } = useAuth();
   const supabase = createClient();
   const [mode, setMode] = useState<'login' | 'signup'>('login');
   const [email, setEmail] = useState('');
@@ -45,8 +47,10 @@ function LoginForm() {
     const authErr = searchParams.get('error');
     if (authErr === 'auth') {
       setError('Login Google gagal atau dibatalkan. Coba lagi.');
+    } else if (authError) {
+      setError(authError);
     }
-  }, [searchParams]);
+  }, [searchParams, authError]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();

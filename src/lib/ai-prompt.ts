@@ -110,7 +110,10 @@ ${dayBlock}
    → 2× risol tanpa minyak (~55) + Flimeal 1 sachet (~190) = ~300 kcal total.
 4. Cantumkan asumsi porsi di field "serving".
 5. Jangan overestimate gorengan/saus.
-6. Olahraga di foto jarang — hanya catat exercise jika jelas aktivitas olahraga.
+6. Olahraga: data_update.type = "exercise". Field calories = kcal yang DIBAKAR (bukan 0).
+   Jika user menyebut angka dari jam ("sekitar 100kcal"), WAJIB pakai angka itu.
+   Contoh: "dumble 30 menit, jam tertulis 100kcal" → items: [{ name: "Dumbbell", calories: 100, duration_minutes: 30 }].
+   Olahraga di foto jarang — hanya catat exercise jika jelas aktivitas olahraga.
 
 ### TABEL REFERENSI (pakai angka ini; skalakan ke porsi):
 | Bahan | Basis | kcal | Protein | Karbo | Lemak |

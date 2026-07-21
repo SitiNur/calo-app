@@ -366,12 +366,31 @@ const FOODS: FoodRef[] = [
 ];
 
 const EXERCISES: { name: string; met: number; keywords: string[] }[] = [
-  { name: 'Jalan kaki', met: 3.5, keywords: ['jalan kaki', 'walking'] },
+  { name: 'Jalan kaki', met: 3.5, keywords: ['jalan kaki', 'walking', 'jalan santai'] },
   { name: 'Lari', met: 9.8, keywords: ['lari', 'running', 'jogging'] },
   { name: 'Bersepeda', met: 6.8, keywords: ['sepeda', 'cycling'] },
-  { name: 'Gym', met: 5.0, keywords: ['gym', 'angkat beban', 'workout'] },
+  {
+    name: 'Dumbbell / angkat beban',
+    met: 5.0,
+    keywords: [
+      'dumbbell',
+      'dumble',
+      'dumbele',
+      'barbell',
+      'angkat beban',
+      'weight training',
+      'strength training',
+    ],
+  },
+  { name: 'Gym', met: 5.0, keywords: ['gym', 'workout', 'fitness'] },
   { name: 'Renang', met: 8.0, keywords: ['renang', 'swim'] },
+  { name: 'Yoga', met: 3.0, keywords: ['yoga', 'pilates'] },
+  { name: 'HIIT', met: 8.0, keywords: ['hiit', 'cardio', 'aerobic', 'senam'] },
+  { name: 'Olahraga', met: 4.5, keywords: ['olahraga', 'exercise', 'sport'] },
 ];
+
+const EXERCISE_HINT =
+  /\b(olahraga|exercise|sport|gym|workout|lari|jogging|jalan\s*kaki|sepeda|renang|yoga|pilates|hiit|cardio|dumbbell|dumble|dumbele|barbell|angkat\s*beban|push\s*up|sit\s*up|squat)\b/i;
 
 const WORD_QTY: Record<string, number> = {
   setengah: 0.5,
@@ -770,27 +789,119 @@ function matchFood(segment: string): FoodItem | null {
 }
 
 function isExerciseSegment(segment: string): boolean {
-  return EXERCISES.some((ex) => ex.keywords.some((k) => segment.toLowerCase().includes(k)));
+  const s = segment.toLowerCase();
+  if (EXERCISE_HINT.test(s)) return true;
+  return EXERCISES.some((ex) => ex.keywords.some((k) => s.includes(k)));
+}
+
+/** Kalori olahraga eksplisit dari user / jam: "100kcal", "sekitar 100 kcal", "(100 kalori)" */
+export function parseExplicitExerciseCalories(text: string): number | null {
+  const s = text || '';
+  const patterns = [
+    /(?:sekitar|kira-?kira|kurang\s*lebih|±|~)?\s*(\d+)\s*(?:kcal|kalori|kal)\b/i,
+    /\(\s*(\d+)\s*(?:kcal|kalori|kal)\s*\)/i,
+    /bakar(?:an)?\s*(?:sekitar\s*)?(\d+)\s*(?:kcal|kalori|kal)?/i,
+    /jam\s+(?:tertulis|nunjuk(?:kan)?|tampil(?:kan)?)?\s*(?:sekitar\s*)?(\d+)\s*(?:kcal|kalori|kal)?/i,
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m) {
+      const n = Number(m[1]);
+      if (n > 0 && n <= 2000) return n;
+    }
+  }
+  return null;
 }
 
 function matchExercise(segment: string, weightKg: number): ExerciseItem | null {
   const s = segment.toLowerCase();
+  if (!isExerciseSegment(s) && parseExplicitExerciseCalories(segment) === null) {
+    return null;
+  }
+
   const durationMatch = s.match(/(\d+)\s*(menit|mnt|min|jam)\b/i);
   let duration = 30;
   if (durationMatch) {
     duration = Number(durationMatch[1]);
     if (/jam/i.test(durationMatch[2])) duration *= 60;
   }
-  for (const ex of EXERCISES) {
-    if (ex.keywords.some((k) => s.includes(k))) {
-      return {
-        name: ex.name,
-        caloriesBurned: Math.round(ex.met * weightKg * (duration / 60)),
-        durationMinutes: duration,
-      };
-    }
+
+  const explicit = parseExplicitExerciseCalories(segment);
+  let matched = EXERCISES.find((ex) => ex.keywords.some((k) => s.includes(k)));
+  // "Olahraga, dumble..." — prefer specific over generic "Olahraga"
+  if (matched?.name === 'Olahraga') {
+    const specific = EXERCISES.find(
+      (ex) => ex.name !== 'Olahraga' && ex.keywords.some((k) => s.includes(k))
+    );
+    if (specific) matched = specific;
   }
-  return null;
+  if (!matched && EXERCISE_HINT.test(s)) {
+    matched = EXERCISES.find((ex) => ex.name === 'Olahraga') || {
+      name: 'Olahraga',
+      met: 4.5,
+      keywords: [],
+    };
+  }
+  if (!matched) return null;
+
+  const fromMet = Math.round(matched.met * weightKg * (duration / 60));
+  return {
+    name: matched.name,
+    caloriesBurned: explicit ?? fromMet,
+    durationMinutes: duration,
+  };
+}
+
+/** Isi kalori olahraga dari teks user jika item masih 0 / kosong. */
+export function applyExerciseCaloriesFromMessage(
+  ai: AiResponse,
+  message: string,
+  weightKg = 70
+): AiResponse {
+  const explicit = parseExplicitExerciseCalories(message);
+  const looksExercise =
+    isExerciseSegment(message) ||
+    Boolean(ai.exerciseItems?.length) ||
+    ai.type === 'exercise';
+
+  if (!looksExercise) return ai;
+
+  let exerciseItems = [...(ai.exerciseItems || [])];
+  if (!exerciseItems.length && (explicit != null || isExerciseSegment(message))) {
+    const fromLocal = matchExercise(message, weightKg);
+    if (fromLocal) exerciseItems = [fromLocal];
+  }
+
+  exerciseItems = exerciseItems.map((item) => {
+    const burned = Math.round(Number(item.caloriesBurned) || 0);
+    if (burned > 0) return item;
+    if (explicit != null) {
+      return { ...item, caloriesBurned: explicit };
+    }
+    const estimated = matchExercise(
+      `${item.name} ${item.durationMinutes || 30} menit ${message}`,
+      weightKg
+    );
+    return estimated
+      ? { ...item, caloriesBurned: estimated.caloriesBurned, durationMinutes: item.durationMinutes || estimated.durationMinutes }
+      : item;
+  });
+
+  // Jangan biarkan kalori olahraga ikut ke foodItems (mis. "100kcal" ter-parse sebagai makanan)
+  const foodItems = (ai.foodItems || []).filter((f) => {
+    if (!looksExercise) return true;
+    // Drop food items that are only the exercise kcal note
+    const name = (f.name || '').toLowerCase();
+    return !/jam tertulis|sekitar|kcal|kalori|olahraga|dumble|dumbbell/.test(name);
+  });
+
+  const hasEx = exerciseItems.some((e) => (e.caloriesBurned || 0) > 0) || exerciseItems.length > 0;
+  return normalizeAiResponse({
+    ...ai,
+    type: hasEx && !foodItems.length ? 'exercise' : foodItems.length ? 'food' : ai.type,
+    foodItems,
+    exerciseItems,
+  });
 }
 
 /** Segmen makanan/olahraga setelah normalisasi (shared by estimate + completeness). */
@@ -809,6 +920,17 @@ function preparedSegments(message: string): string[] {
 }
 
 export function isParseComplete(message: string, result: AiResponse): boolean {
+  // Blok olahraga tunggal (sering multi-klausa) sudah di-collapse di estimateLocally
+  if (
+    result.type === 'exercise' &&
+    (result.exerciseItems?.length || 0) > 0 &&
+    !(result.foodItems?.length) &&
+    isExerciseSegment(message) &&
+    (result.exerciseItems || []).every((e) => (e.caloriesBurned || 0) > 0)
+  ) {
+    return true;
+  }
+
   const segments = preparedSegments(message);
   if (segments.length === 0) {
     return (result.foodItems?.length || 0) > 0 || (result.exerciseItems?.length || 0) > 0;
@@ -817,11 +939,12 @@ export function isParseComplete(message: string, result: AiResponse): boolean {
   let exerciseExpected = 0;
   for (const seg of segments) {
     if (isExerciseSegment(seg)) {
-      // Segmen olahraga harus memang match
-      if (!EXERCISES.some((ex) => ex.keywords.some((k) => seg.toLowerCase().includes(k)))) {
-        return false;
-      }
+      if (!matchExercise(seg, 70)) return false;
       exerciseExpected++;
+      continue;
+    }
+    // Catatan kcal jam di tengah pesan olahraga — skip
+    if (parseExplicitExerciseCalories(seg) != null && /jam|tertulis|bakar/i.test(seg)) {
       continue;
     }
     // Penting: segmen makanan yang tidak dikenali → TIDAK complete (jangan local-only)
@@ -877,6 +1000,20 @@ export function estimateLocally(message: string, weightKg = 70): AiResponse {
       reply: 'Cerita aja mau makan apa atau olahraga apa — aku bantu hitung kalorinya.',
     });
   }
+
+  // Satu blok olahraga (sering dipisah koma) → parse sebagai satu exercise
+  if (isExerciseSegment(text) && !/\b(nasi|ayam|telur|tempe|risol|pisang|susu|roti)\b/i.test(text)) {
+    const ex = matchExercise(text, weightKg);
+    if (ex) {
+      return normalizeAiResponse({
+        type: 'exercise',
+        reply: '',
+        foodItems: [],
+        exerciseItems: [ex],
+      });
+    }
+  }
+
   const parts = preparedSegments(text);
   const foodItems: FoodItem[] = [];
   const exerciseItems: ExerciseItem[] = [];
@@ -884,6 +1021,10 @@ export function estimateLocally(message: string, weightKg = 70): AiResponse {
     if (isExerciseSegment(part)) {
       const ex = matchExercise(part, weightKg);
       if (ex) exerciseItems.push(ex);
+      continue;
+    }
+    // Jangan anggap "100kcal" di konteks olahraga sebagai makanan
+    if (parseExplicitExerciseCalories(part) != null && /jam|tertulis|bakar|olahraga/i.test(text)) {
       continue;
     }
     const food = matchFood(part);

@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { format, parseISO } from 'date-fns';
 import { id as localeId } from 'date-fns/locale';
+import { Check, Pencil, Trash2, X } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -24,6 +25,9 @@ export default function WeightPage() {
   const [logs, setLogs] = useState<WeightLog[]>([]);
   const [weight, setWeight] = useState('');
   const [saving, setSaving] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editValue, setEditValue] = useState('');
+  const [editBusy, setEditBusy] = useState(false);
 
   const load = async () => {
     if (!user) return;
@@ -41,6 +45,53 @@ export default function WeightPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  const syncProfileWeight = async (value: number) => {
+    if (!user || !profile) return;
+    if (
+      !profile.gender ||
+      !profile.age ||
+      !profile.height ||
+      !profile.activity_level ||
+      !profile.weight_goal
+    ) {
+      await supabase
+        .from('profiles')
+        .update({ weight: value, updated_at: new Date().toISOString() })
+        .eq('id', user.id);
+      await refreshProfile();
+      return;
+    }
+
+    const speed =
+      profile.target_speed != null && Number.isFinite(Number(profile.target_speed))
+        ? Number(profile.target_speed)
+        : 0.5;
+    const targets = calculateTargets({
+      gender: profile.gender as Gender,
+      age: profile.age,
+      height: Number(profile.height),
+      weight: value,
+      activityLevel: profile.activity_level as ActivityLevel,
+      weightGoal: profile.weight_goal as WeightGoal,
+      targetSpeed: profile.weight_goal === 'maintain' ? 0 : speed || 0.5,
+    });
+    await supabase
+      .from('profiles')
+      .update({
+        weight: value,
+        bmr: targets.bmr,
+        tdee: targets.tdee,
+        target_calories: targets.targetCalories,
+        protein_target_g: targets.proteinTargetG,
+        carbs_target_g: targets.carbsTargetG,
+        fat_target_g: targets.fatTargetG,
+        water_goal_ml: targets.waterGoalMl,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', user.id);
+    await refreshProfile();
+  };
+
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     if (!user || !profile) return;
@@ -53,48 +104,82 @@ export default function WeightPage() {
         weight_kg: value,
         logged_at: new Date().toISOString().slice(0, 10),
       });
-
-      if (
-        profile.gender &&
-        profile.age &&
-        profile.height &&
-        profile.activity_level &&
-        profile.weight_goal
-      ) {
-        const speed =
-          profile.target_speed != null && Number.isFinite(Number(profile.target_speed))
-            ? Number(profile.target_speed)
-            : 0.5;
-        const targets = calculateTargets({
-          gender: profile.gender as Gender,
-          age: profile.age,
-          height: Number(profile.height),
-          weight: value,
-          activityLevel: profile.activity_level as ActivityLevel,
-          weightGoal: profile.weight_goal as WeightGoal,
-          targetSpeed: profile.weight_goal === 'maintain' ? 0 : speed || 0.5,
-        });
-        await supabase
-          .from('profiles')
-          .update({
-            weight: value,
-            bmr: targets.bmr,
-            tdee: targets.tdee,
-            target_calories: targets.targetCalories,
-            protein_target_g: targets.proteinTargetG,
-            carbs_target_g: targets.carbsTargetG,
-            fat_target_g: targets.fatTargetG,
-            water_goal_ml: targets.waterGoalMl,
-            updated_at: new Date().toISOString(),
-          })
-          .eq('id', user.id);
-        await refreshProfile();
-      }
-
+      await syncProfileWeight(value);
       setWeight('');
       await load();
     } finally {
       setSaving(false);
+    }
+  };
+
+  const startEdit = (log: WeightLog) => {
+    setEditingId(log.id);
+    setEditValue(String(log.weight_kg));
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditValue('');
+  };
+
+  const saveEdit = async (log: WeightLog) => {
+    if (!user) return;
+    const value = Number(editValue);
+    if (!value || value <= 0) return;
+    setEditBusy(true);
+    try {
+      await supabase
+        .from('weight_logs')
+        .update({ weight_kg: value })
+        .eq('id', log.id)
+        .eq('user_id', user.id);
+
+      const { data: refreshed } = await supabase
+        .from('weight_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('logged_at', { ascending: true })
+        .limit(90);
+      const nextLogs = (refreshed as WeightLog[]) || [];
+      setLogs(nextLogs);
+
+      const latest = nextLogs[nextLogs.length - 1];
+      if (latest) {
+        await syncProfileWeight(Number(latest.weight_kg));
+      }
+      cancelEdit();
+    } finally {
+      setEditBusy(false);
+    }
+  };
+
+  const deleteLog = async (log: WeightLog) => {
+    if (!user) return;
+    const ok = window.confirm(
+      `Hapus catatan berat ${log.weight_kg} kg (${format(parseISO(log.logged_at), 'd MMM yyyy', {
+        locale: localeId,
+      })})?`
+    );
+    if (!ok) return;
+    setEditBusy(true);
+    try {
+      await supabase.from('weight_logs').delete().eq('id', log.id).eq('user_id', user.id);
+      const { data: refreshed } = await supabase
+        .from('weight_logs')
+        .select('*')
+        .eq('user_id', user.id)
+        .order('logged_at', { ascending: true })
+        .limit(90);
+      const nextLogs = (refreshed as WeightLog[]) || [];
+      setLogs(nextLogs);
+
+      if (nextLogs.length > 0) {
+        const latest = nextLogs[nextLogs.length - 1];
+        await syncProfileWeight(Number(latest.weight_kg));
+      }
+      if (editingId === log.id) cancelEdit();
+    } finally {
+      setEditBusy(false);
     }
   };
 
@@ -190,12 +275,65 @@ export default function WeightPage() {
           {[...logs].reverse().map((log) => (
             <div
               key={log.id}
-              className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm"
+              className="flex items-center justify-between gap-2 rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm"
             >
-              <span className="text-[var(--muted)]">
+              <span className="shrink-0 text-[var(--muted)]">
                 {format(parseISO(log.logged_at), 'd MMM yyyy', { locale: localeId })}
               </span>
-              <span className="font-semibold">{log.weight_kg} kg</span>
+
+              {editingId === log.id ? (
+                <div className="flex min-w-0 flex-1 items-center justify-end gap-1.5">
+                  <input
+                    type="number"
+                    step="0.1"
+                    value={editValue}
+                    onChange={(e) => setEditValue(e.target.value)}
+                    className="w-20 rounded-lg border border-[var(--border)] px-2 py-1 text-right text-sm outline-none"
+                    autoFocus
+                  />
+                  <span className="text-[var(--muted)]">kg</span>
+                  <button
+                    type="button"
+                    disabled={editBusy}
+                    onClick={() => void saveEdit(log)}
+                    className="rounded-lg p-1.5 text-[var(--ok)] hover:bg-[var(--ok-soft)] disabled:opacity-40"
+                    aria-label="Simpan"
+                  >
+                    <Check size={16} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={editBusy}
+                    onClick={cancelEdit}
+                    className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] disabled:opacity-40"
+                    aria-label="Batal"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <span className="font-semibold">{log.weight_kg} kg</span>
+                  <button
+                    type="button"
+                    disabled={editBusy}
+                    onClick={() => startEdit(log)}
+                    className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--bg)] hover:text-[var(--ink)] disabled:opacity-40"
+                    aria-label="Edit"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    disabled={editBusy}
+                    onClick={() => void deleteLog(log)}
+                    className="rounded-lg p-1.5 text-[var(--muted)] hover:bg-[var(--miss-soft)] hover:text-[var(--miss)] disabled:opacity-40"
+                    aria-label="Hapus"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              )}
             </div>
           ))}
           {logs.length === 0 && (

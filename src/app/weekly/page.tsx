@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import {
   addDays,
   eachDayOfInterval,
@@ -12,6 +13,7 @@ import {
   subDays,
 } from 'date-fns';
 import { id as localeId } from 'date-fns/locale';
+import { ChevronRight } from 'lucide-react';
 import {
   CartesianGrid,
   Legend,
@@ -46,6 +48,7 @@ type DayPoint = {
 export default function WeeklyPage() {
   const { user, profile } = useAuth();
   const supabase = createClient();
+  const router = useRouter();
   const [logs, setLogs] = useState<CalorieLog[]>([]);
   const [mode, setMode] = useState<RangeMode>('week');
   const [loading, setLoading] = useState(false);
@@ -64,7 +67,6 @@ export default function WeeklyPage() {
       const to = endOfMonth(today);
       return { from, to, days: eachDayOfInterval({ start: from, end: to }) };
     }
-    // all: last 90 days window for chart readability (data query can be wider)
     const to = today;
     const from = subDays(today, 89);
     return { from, to, days: eachDayOfInterval({ start: from, end: to }) };
@@ -75,23 +77,18 @@ export default function WeeklyPage() {
     setLoading(true);
     const from = dateKey(range.from);
     const to = dateKey(range.to);
-    let query = supabase
+    void supabase
       .from('calorie_logs')
       .select('*')
       .eq('user_id', user.id)
-      .order('log_date', { ascending: true });
-
-    if (mode !== 'all') {
-      query = query.gte('log_date', from).lte('log_date', to);
-    } else {
-      query = query.gte('log_date', from).lte('log_date', to);
-    }
-
-    void query.then(({ data }) => {
-      setLogs((data as CalorieLog[]) || []);
-      setLoading(false);
-    });
-  }, [user, supabase, range.from, range.to, mode]);
+      .gte('log_date', from)
+      .lte('log_date', to)
+      .order('log_date', { ascending: true })
+      .then(({ data }) => {
+        setLogs((data as CalorieLog[]) || []);
+        setLoading(false);
+      });
+  }, [user, supabase, range.from, range.to]);
 
   const byDay: DayPoint[] = useMemo(() => {
     return range.days.map((day) => {
@@ -101,6 +98,7 @@ export default function WeeklyPage() {
       const exercise = dayLogs
         .filter((l) => l.type === 'exercise')
         .reduce((s, l) => s + l.calories, 0);
+      // Bersih = makan − olahraga (sama seperti net di MacroSummary via remaining)
       const net = food - exercise;
       const hasData = dayLogs.length > 0;
       return {
@@ -114,27 +112,34 @@ export default function WeeklyPage() {
         exercise,
         net,
         target,
-        over: hasData && food > target,
+        over: hasData && net > target,
         hasData,
       };
     });
   }, [range.days, logs, target, mode]);
 
-  const loggedDays = byDay.filter((d) => d.hasData && d.food > 0);
+  const loggedDays = byDay.filter((d) => d.hasData);
   const avgNet =
     loggedDays.reduce((s, d) => s + d.net, 0) / Math.max(1, loggedDays.length) || 0;
-  const daysOver = loggedDays.filter((d) => d.food > target).length;
-  const daysUnder = loggedDays.filter((d) => d.food > 0 && d.food <= target).length;
+  const avgExercise =
+    loggedDays.reduce((s, d) => s + d.exercise, 0) / Math.max(1, loggedDays.length) || 0;
+  const daysOver = loggedDays.filter((d) => d.net > target).length;
+  const daysUnder = loggedDays.filter((d) => d.net <= target).length;
 
   const chartData = byDay.map((d) => ({
     ...d,
-    // null agar garis putus di hari tanpa data
+    netPlot: d.hasData ? d.net : null,
     foodPlot: d.hasData ? d.food : null,
+    exercisePlot: d.hasData ? d.exercise : null,
     targetPlot: target,
   }));
 
   const title =
     mode === 'week' ? 'Mingguan' : mode === 'month' ? 'Bulanan' : 'Semua data';
+
+  const openDay = (key: string) => {
+    router.push(`/today?date=${key}`);
+  };
 
   return (
     <AppShell title="Ringkasan">
@@ -167,9 +172,12 @@ export default function WeeklyPage() {
             Ringkasan {title.toLowerCase()}
           </p>
           <p className="display-font mt-1 text-3xl font-semibold">{Math.round(avgNet)} kcal</p>
-          <p className="text-sm text-[var(--muted)]">rata-rata bersih / hari tercatat</p>
+          <p className="text-sm text-[var(--muted)]">
+            rata-rata bersih (makan − olahraga) / hari tercatat
+          </p>
           <p className="mt-2 text-xs text-[var(--muted)]">
-            Target {target} kcal · {daysUnder} hari ≤ target · {daysOver} hari di atas target
+            Target {target} kcal · olahraga rata-rata −{Math.round(avgExercise)} kcal · {daysUnder}{' '}
+            hari ≤ target · {daysOver} hari di atas
             {loading ? ' · memuat…' : ''}
           </p>
 
@@ -199,13 +207,20 @@ export default function WeeklyPage() {
                   }
                   formatter={(value, name) => {
                     const n = typeof value === 'number' ? value : Number(value);
+                    if (name === 'netPlot') return [`${n} kcal`, 'Bersih'];
                     if (name === 'foodPlot') return [`${n} kcal`, 'Makan'];
+                    if (name === 'exercisePlot') return [`${n} kcal`, 'Olahraga'];
                     if (name === 'targetPlot') return [`${n} kcal`, 'Target'];
                     return [value, name];
                   }}
                 />
                 <Legend
-                  formatter={(v) => (v === 'foodPlot' ? 'Kalori makan' : 'Target harian')}
+                  formatter={(v) => {
+                    if (v === 'netPlot') return 'Bersih (makan−olah)';
+                    if (v === 'exercisePlot') return 'Olahraga';
+                    if (v === 'targetPlot') return 'Target';
+                    return v;
+                  }}
                   wrapperStyle={{ fontSize: 11 }}
                 />
                 <ReferenceLine
@@ -225,7 +240,15 @@ export default function WeeklyPage() {
                 />
                 <Line
                   type="monotone"
-                  dataKey="foodPlot"
+                  dataKey="exercisePlot"
+                  stroke="var(--ok)"
+                  strokeWidth={1.5}
+                  connectNulls={false}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="netPlot"
                   stroke="var(--brand)"
                   strokeWidth={2.5}
                   connectNulls={false}
@@ -254,8 +277,8 @@ export default function WeeklyPage() {
             </ResponsiveContainer>
           </div>
           <p className="mt-2 text-[10px] text-[var(--muted)]">
-            Titik merah = di atas target · titik biru = di bawah/sesuai target · garis putus-putus =
-            target harian
+            Garis biru = bersih (makan − olahraga) · hijau = olahraga · putus-putus = target. Ketuk
+            hari di daftar untuk buka chat.
           </p>
         </section>
 
@@ -265,9 +288,11 @@ export default function WeeklyPage() {
             .slice()
             .reverse()
             .map((d) => (
-              <div
+              <button
                 key={d.key}
-                className="flex items-center justify-between rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-sm"
+                type="button"
+                onClick={() => openDay(d.key)}
+                className="flex w-full items-center justify-between rounded-2xl border border-[var(--border)] bg-white px-4 py-3 text-left text-sm transition hover:bg-[var(--bg)]"
               >
                 <div>
                   <p className="font-medium">
@@ -275,15 +300,18 @@ export default function WeeklyPage() {
                   </p>
                   <p className="text-xs text-[var(--muted)]">
                     Makan {d.food} · Olahraga −{d.exercise}
-                    {d.over ? ' · di atas target' : d.food > 0 ? ' · on track' : ''}
+                    {d.over ? ' · di atas target' : ' · on track'}
                   </p>
                 </div>
-                <p
-                  className={`font-semibold ${d.over ? 'text-[var(--miss)]' : 'text-[var(--ink)]'}`}
-                >
-                  {d.net} kcal
-                </p>
-              </div>
+                <div className="flex items-center gap-2">
+                  <p
+                    className={`font-semibold ${d.over ? 'text-[var(--miss)]' : 'text-[var(--ink)]'}`}
+                  >
+                    {d.net} kcal
+                  </p>
+                  <ChevronRight size={16} className="text-[var(--muted)]" />
+                </div>
+              </button>
             ))}
           {!loading && loggedDays.length === 0 && (
             <p className="py-8 text-center text-sm text-[var(--muted)]">

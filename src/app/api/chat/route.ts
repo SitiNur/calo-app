@@ -2,7 +2,12 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { NextRequest, NextResponse } from 'next/server';
 import { buildNutritionPrompt, type DayContext, type ProfileContext } from '@/lib/ai-prompt';
 import { buildLocalReply, parseGeminiPayload, stripMealTimeLabels } from '@/lib/ai-parse';
-import { estimateLocally, isParseComplete, refineWithLocalDb } from '@/lib/localEstimate';
+import {
+  applyExerciseCaloriesFromMessage,
+  estimateLocally,
+  isParseComplete,
+  refineWithLocalDb,
+} from '@/lib/localEstimate';
 import { normalizeAiResponse } from '@/lib/nutrition';
 import type { AiResponse } from '@/lib/types';
 
@@ -76,11 +81,19 @@ Return JSON sesuai format wajib.`;
 function withSyncedAppReply(
   parsed: AiResponse,
   day: DayContext | undefined,
-  profile: ProfileContext | undefined
+  profile: ProfileContext | undefined,
+  originalMessage?: string,
+  weightKg = 70
 ): AiResponse {
-  const normalized = normalizeAiResponse(parsed);
+  const patched = originalMessage
+    ? applyExerciseCaloriesFromMessage(parsed, originalMessage, weightKg)
+    : parsed;
+  const normalized = normalizeAiResponse(patched);
   const foodTotal = (normalized.foodItems || []).reduce((s, f) => s + f.calories, 0);
   const exTotal = (normalized.exerciseItems || []).reduce((s, e) => s + e.caloriesBurned, 0);
+  const isExercise =
+    normalized.type === 'exercise' ||
+    ((normalized.exerciseItems?.length || 0) > 0 && foodTotal === 0);
 
   if (normalized.type === 'chat' || (!foodTotal && !exTotal)) {
     return {
@@ -90,14 +103,14 @@ function withSyncedAppReply(
   }
 
   const remainingBefore = day?.remaining ?? profile?.target_calories ?? 2000;
-  const remainingAfter =
-    normalized.type === 'exercise' ? remainingBefore + exTotal : remainingBefore - foodTotal;
+  const remainingAfter = isExercise ? remainingBefore + exTotal : remainingBefore - foodTotal;
 
   return {
     ...normalized,
+    type: isExercise ? 'exercise' : normalized.type === 'exercise' ? 'exercise' : 'food',
     reply: buildLocalReply(
-      normalized.type === 'exercise' ? 'exercise' : 'food',
-      normalized.type === 'exercise' ? exTotal : foodTotal,
+      isExercise ? 'exercise' : 'food',
+      isExercise ? exTotal : foodTotal,
       remainingAfter,
       profile?.full_name || undefined
     ),
@@ -220,7 +233,7 @@ export async function POST(req: NextRequest) {
 
     if (localParsedWell) {
       return NextResponse.json({
-        ...withSyncedAppReply(localFirst, day, profile),
+        ...withSyncedAppReply(localFirst, day, profile, message || '', weight),
         source: 'local-db',
       });
     }
@@ -254,7 +267,7 @@ export async function POST(req: NextRequest) {
           });
         }
         return NextResponse.json({
-          ...withSyncedAppReply(fallback, day, profile),
+          ...withSyncedAppReply(fallback, day, profile, message || '', weight),
           source: 'local-db',
         });
       }
@@ -267,27 +280,27 @@ export async function POST(req: NextRequest) {
           (localCaption.foodItems?.length || localCaption.exerciseItems?.length)
         ) {
           return NextResponse.json({
-            ...withSyncedAppReply(localCaption, day, profile),
+            ...withSyncedAppReply(localCaption, day, profile, message || '', weight),
             source: 'local-db',
           });
         }
         // Caption belum lengkap di DB — pakai vision, tapi sisa kalori selalu dari app
         return NextResponse.json({
-          ...withSyncedAppReply(parsed, day, profile),
+          ...withSyncedAppReply(parsed, day, profile, message || '', weight),
           source: 'gemini',
         });
       }
 
       if (hasImage) {
         return NextResponse.json({
-          ...withSyncedAppReply(parsed, day, profile),
+          ...withSyncedAppReply(parsed, day, profile, message || '', weight),
           source: 'gemini',
         });
       }
 
       const refined = refineWithLocalDb(parsed, message || '', weight);
       return NextResponse.json({
-        ...withSyncedAppReply(refined, day, profile),
+        ...withSyncedAppReply(refined, day, profile, message || '', weight),
         source: refined.source || 'gemini',
       });
     } catch (error) {
@@ -308,7 +321,7 @@ export async function POST(req: NextRequest) {
       }
 
       return NextResponse.json({
-        ...withSyncedAppReply(local, day, profile),
+        ...withSyncedAppReply(local, day, profile, message || '', weight),
         source: 'local',
       });
     }

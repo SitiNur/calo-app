@@ -1,6 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { isValid, parseISO, startOfDay } from 'date-fns';
+import { Loader2 } from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
 import { DateStrip } from '@/components/DateStrip';
 import { MacroSummary } from '@/components/MacroSummary';
@@ -17,18 +20,68 @@ function dayTotalsFromLogs(dayLogs: CalorieLog[], profile: Profile | null): DayT
   return computeDayTotals(dayLogs, profile);
 }
 
+function parseDateParam(value: string | null): Date | null {
+  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const d = parseISO(value);
+  if (!isValid(d)) return null;
+  const today = startOfDay(new Date());
+  if (d.getTime() > today.getTime()) return today;
+  return startOfDay(d);
+}
+
 export default function TodayPage() {
+  return (
+    <Suspense
+      fallback={
+        <AppShell title="Hari ini">
+          <div className="flex flex-1 items-center justify-center text-sm text-[var(--muted)]">
+            Memuat…
+          </div>
+        </AppShell>
+      }
+    >
+      <TodayPageInner />
+    </Suspense>
+  );
+}
+
+function TodayPageInner() {
   const { user, profile } = useAuth();
   const supabase = useMemo(() => createClient(), []);
-  const [selected, setSelected] = useState(() => new Date());
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [selected, setSelected] = useState(() => {
+    return parseDateParam(searchParams.get('date')) || startOfDay(new Date());
+  });
   const [logs, setLogs] = useState<CalorieLog[]>([]);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [loggedDates, setLoggedDates] = useState<Set<string>>(new Set());
+  const [dayNets, setDayNets] = useState<Record<string, number>>({});
   const [allLogDates, setAllLogDates] = useState<string[]>([]);
   const [cups, setCups] = useState(0);
   const [busy, setBusy] = useState(false);
   const feedRef = useRef<HTMLDivElement>(null);
   const selectedKey = dateKey(selected);
+
+  useEffect(() => {
+    const fromUrl = parseDateParam(searchParams.get('date'));
+    if (!fromUrl) return;
+    if (dateKey(fromUrl) !== dateKey(selected)) {
+      setSelected(fromUrl);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
+  const selectDate = (d: Date) => {
+    const next = startOfDay(d);
+    setSelected(next);
+    const key = dateKey(next);
+    const todayKey = dateKey(new Date());
+    if (key === todayKey) {
+      router.replace('/today', { scroll: false });
+    } else {
+      router.replace(`/today?date=${key}`, { scroll: false });
+    }
+  };
 
   const totals = useMemo(() => computeDayTotals(logs, profile), [logs, profile]);
   const streak = useMemo(() => computeStreak(allLogDates), [allLogDates]);
@@ -56,7 +109,7 @@ export default function TodayPage() {
           .eq('user_id', user.id)
           .eq('log_date', selectedKey)
           .maybeSingle(),
-        supabase.from('calorie_logs').select('log_date').eq('user_id', user.id),
+        supabase.from('calorie_logs').select('log_date, type, calories').eq('user_id', user.id),
       ]);
 
     setLogs((dayLogs as CalorieLog[]) || []);
@@ -72,18 +125,44 @@ export default function TodayPage() {
     setMessages(cleaned);
     setCups(water?.cups ?? 0);
 
-    const dates = (monthLogs || []).map((r: { log_date: string }) => r.log_date);
-    setAllLogDates(dates);
-    setLoggedDates(new Set(dates));
+    const nets: Record<string, number> = {};
+    for (const row of monthLogs || []) {
+      const r = row as { log_date: string; type: string; calories: number };
+      if (!nets[r.log_date]) nets[r.log_date] = 0;
+      nets[r.log_date] += r.type === 'exercise' ? -Number(r.calories || 0) : Number(r.calories || 0);
+    }
+    setDayNets(nets);
+    setAllLogDates(Object.keys(nets));
   }, [user, selectedKey, supabase]);
 
   useEffect(() => {
     void loadDay();
   }, [loadDay]);
 
+  // Sinkronkan status strip tanggal dari log hari terpilih
+  useEffect(() => {
+    const net = totals.foodCalories - totals.exerciseCalories;
+    setDayNets((prev) => {
+      if (logs.length === 0) {
+        if (!(selectedKey in prev)) return prev;
+        const next = { ...prev };
+        delete next[selectedKey];
+        return next;
+      }
+      if (prev[selectedKey] === net) return prev;
+      return { ...prev, [selectedKey]: net };
+    });
+    setAllLogDates((prev) => {
+      if (logs.length === 0) {
+        return prev.includes(selectedKey) ? prev.filter((d) => d !== selectedKey) : prev;
+      }
+      return prev.includes(selectedKey) ? prev : [...prev, selectedKey];
+    });
+  }, [logs, selectedKey, totals.foodCalories, totals.exerciseCalories]);
+
   useEffect(() => {
     feedRef.current?.scrollTo({ top: feedRef.current.scrollHeight, behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, busy]);
 
   const updateWater = async (nextCups: number) => {
     if (!user) return;
@@ -273,8 +352,6 @@ export default function TodayPage() {
           .select('*');
         if (logErr) throw logErr;
         setLogs((prev) => [...prev, ...((newLogs as CalorieLog[]) || [])]);
-        setLoggedDates((prev) => new Set(prev).add(selectedKey));
-        setAllLogDates((prev) => [...prev, selectedKey]);
       }
     } catch (err) {
       console.error(err);
@@ -328,8 +405,6 @@ export default function TodayPage() {
             const { data: newLogs } = await supabase.from('calorie_logs').insert(inserts).select('*');
             if (newLogs) {
               setLogs((prev) => [...prev, ...((newLogs as CalorieLog[]) || [])]);
-              setLoggedDates((prev) => new Set(prev).add(selectedKey));
-              setAllLogDates((prev) => [...prev, selectedKey]);
             }
           }
           return;
@@ -554,8 +629,6 @@ export default function TodayPage() {
           .select('*');
         if (logErr) throw logErr;
         setLogs([...logsWithoutPair, ...((newLogs as CalorieLog[]) || [])]);
-        setLoggedDates((prev) => new Set(prev).add(selectedKey));
-        setAllLogDates((prev) => [...prev, selectedKey]);
       }
     } catch (err) {
       console.error(err);
@@ -630,7 +703,12 @@ export default function TodayPage() {
     <AppShell title="Hari ini">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="shrink-0">
-          <DateStrip selected={selected} onSelect={setSelected} loggedDates={loggedDates} />
+          <DateStrip
+            selected={selected}
+            onSelect={selectDate}
+            dayNets={dayNets}
+            targetCalories={profile?.target_calories ?? 2000}
+          />
           <MacroSummary totals={totals} profile={profile} streak={streak} />
           {showWater && (
             <div id="water">
@@ -644,7 +722,7 @@ export default function TodayPage() {
         </div>
 
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3">
-          {paired.length === 0 && (
+          {paired.length === 0 && !busy && (
             <div className="mx-4 mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-white/60 px-4 py-8 text-center animate-fade-up">
               <p className="display-font text-lg font-semibold">Cerita ke Calo</p>
               <p className="mt-2 text-sm text-[var(--muted)]">
@@ -678,6 +756,14 @@ export default function TodayPage() {
               )}
             </div>
           ))}
+          {busy && (
+            <div className="mx-4 mt-2 flex justify-start animate-fade-up">
+              <div className="mr-6 flex max-w-[85%] items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--muted)] shadow-[var(--shadow)]">
+                <Loader2 size={16} className="shrink-0 animate-spin text-[var(--brand)]" />
+                <span>Sedang menghitung…</span>
+              </div>
+            </div>
+          )}
         </div>
 
         <Composer onSend={handleSend} disabled={busy} />

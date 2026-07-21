@@ -2,10 +2,21 @@ import { createBrowserClient } from '@supabase/ssr';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
 let browserClient: SupabaseClient | null = null;
-let rejectionHandlerInstalled = false;
+let noiseHandlersInstalled = false;
 
 function trimEnv(value: string | undefined): string {
   return (value || '').trim().replace(/^["']|["']$/g, '');
+}
+
+function isAuthNetworkNoise(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err ?? '');
+  const name = err instanceof Error ? err.name : '';
+  if (/AbortError|aborted/i.test(`${name} ${msg}`)) return false;
+  return (
+    /failed to fetch|networkerror|fetch failed|authretryablefetcherror|load failed|network request failed/i.test(
+      `${name} ${msg}`
+    ) || /AuthRetryableFetchError/i.test(name)
+  );
 }
 
 /** Clear persisted Supabase auth keys so a bad refresh token stops looping. */
@@ -21,26 +32,65 @@ export function clearSupabaseAuthStorage() {
   }
 }
 
-function installAuthRejectionHandler(client: SupabaseClient) {
-  if (typeof window === 'undefined' || rejectionHandlerInstalled) return;
-  rejectionHandlerInstalled = true;
+/**
+ * Supabase auth refresh can throw TypeError("Failed to fetch") when offline /
+ * project slow. Next.js dev overlay treats console TypeError as a red screen —
+ * swallow that noise and clear the local session instead.
+ */
+function installAuthNoiseHandlers(client: SupabaseClient) {
+  if (typeof window === 'undefined' || noiseHandlersInstalled) return;
+  noiseHandlersInstalled = true;
 
-  window.addEventListener('unhandledrejection', (event) => {
-    const reason = event.reason;
-    const msg = reason instanceof Error ? reason.message : String(reason ?? '');
-    const name = reason instanceof Error ? reason.name : '';
-    const isAuthFetch =
-      /failed to fetch|networkerror|fetch failed|authretryablefetcherror/i.test(msg) ||
-      /AuthRetryableFetchError/i.test(name);
-
-    if (!isAuthFetch) return;
-
-    // Prevent Next.js red overlay for background token refresh failures
-    event.preventDefault();
+  let recovering = false;
+  const recover = () => {
+    if (recovering) return;
+    recovering = true;
     console.warn('[calo/auth] Supabase fetch failed — clearing local session');
     clearSupabaseAuthStorage();
-    void client.auth.signOut({ scope: 'local' }).catch(() => undefined);
+    void client.auth.signOut({ scope: 'local' }).finally(() => {
+      recovering = false;
+    });
+  };
+
+  window.addEventListener('unhandledrejection', (event) => {
+    if (!isAuthNetworkNoise(event.reason)) return;
+    event.preventDefault();
+    recover();
   });
+
+  // Next.js "Console TypeError" overlay listens to console.error(Error)
+  const originalError = console.error.bind(console);
+  console.error = (...args: unknown[]) => {
+    const hit = args.some((a) => isAuthNetworkNoise(a));
+    if (hit) {
+      console.warn('[calo/auth] suppressed auth network error');
+      recover();
+      return;
+    }
+    originalError(...args);
+  };
+}
+
+function fetchWithTimeout(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  if (typeof window === 'undefined') {
+    return fetch(input, init);
+  }
+
+  const controller = new AbortController();
+  const timeoutMs = 15_000;
+  const timer = window.setTimeout(() => controller.abort(), timeoutMs);
+
+  if (init?.signal) {
+    if (init.signal.aborted) {
+      controller.abort();
+    } else {
+      init.signal.addEventListener('abort', () => controller.abort(), { once: true });
+    }
+  }
+
+  return fetch(input, { ...init, signal: controller.signal }).finally(() =>
+    window.clearTimeout(timer)
+  );
 }
 
 export function createClient() {
@@ -57,9 +107,12 @@ export function createClient() {
       autoRefreshToken: true,
       detectSessionInUrl: true,
     },
+    global: {
+      fetch: fetchWithTimeout,
+    },
   });
 
-  installAuthRejectionHandler(browserClient);
+  installAuthNoiseHandlers(browserClient);
 
   return browserClient;
 }
