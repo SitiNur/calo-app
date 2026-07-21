@@ -17,15 +17,15 @@ function MacroBar({
 }) {
   const pct = target > 0 ? Math.min(100, Math.round((current / target) * 100)) : 0;
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="w-10 shrink-0 text-[9px] font-medium">{label}</span>
-      <div className="h-1 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--bg)]">
+    <div className="flex items-center gap-2">
+      <span className="w-12 shrink-0 text-[11px] font-medium">{label}</span>
+      <div className="h-1.5 min-w-0 flex-1 overflow-hidden rounded-full bg-[var(--bg)]">
         <div
           className="progress-fill h-full rounded-full transition-all duration-500"
           style={{ width: `${pct}%`, background: color }}
         />
       </div>
-      <span className="w-[3.75rem] shrink-0 text-right text-[9px] tabular-nums text-[var(--muted)]">
+      <span className="w-[4.25rem] shrink-0 text-right text-[11px] tabular-nums text-[var(--muted)]">
         {current}/{target}g
       </span>
     </div>
@@ -62,13 +62,13 @@ export function MacroSummary({
   }
 
   return (
-    <div className="mx-3 mt-1.5 mb-1.5 rounded-lg border border-[var(--border)] bg-white/90 px-2 py-1.5 shadow-[var(--shadow)] animate-fade-up">
-      <div className="mb-0.5 flex items-center justify-between">
-        <p className="text-[9px] font-semibold uppercase tracking-wider text-[var(--muted)]">
+    <div className="mx-3 mt-1.5 mb-2 rounded-xl border border-[var(--border)] bg-white/90 px-3 py-2.5 shadow-[var(--shadow)] animate-fade-up">
+      <div className="mb-1 flex items-center justify-between">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--muted)]">
           {page === 0 ? 'Sisa kalori' : 'Makro'}
         </p>
-        <div className="flex items-center gap-0.5 rounded-full bg-[#fff6e0] px-1.5 py-px text-[9px] font-semibold text-[#b7791f]">
-          <Zap size={8} fill="currentColor" />
+        <div className="flex items-center gap-0.5 rounded-full bg-[#fff6e0] px-2 py-0.5 text-[10px] font-semibold text-[#b7791f]">
+          <Zap size={10} fill="currentColor" />
           {streak}
         </div>
       </div>
@@ -76,23 +76,23 @@ export function MacroSummary({
       <div
         ref={scrollerRef}
         onScroll={handleScroll}
-        className="flex h-[40px] snap-x snap-mandatory overflow-x-auto scrollbar-none touch-pan-x"
+        className="flex h-[52px] snap-x snap-mandatory overflow-x-auto scrollbar-none touch-pan-x"
       >
-        <div className="flex h-full min-w-full shrink-0 basis-full snap-center items-end justify-between gap-2">
-          <div className="flex items-baseline gap-1">
-            <p className="display-font text-xl font-semibold leading-none tracking-tight">
+        <div className="flex h-full min-w-full shrink-0 basis-full snap-center items-end justify-between gap-3">
+          <div className="flex items-baseline gap-1.5">
+            <p className="display-font text-2xl font-semibold leading-none tracking-tight">
               {totals.remaining}
             </p>
-            <p className="text-[10px] text-[var(--muted)]">kcal sisa</p>
+            <p className="text-xs text-[var(--muted)]">kcal sisa</p>
           </div>
-          <div className="space-y-0 text-right text-[9px] leading-tight text-[var(--muted)]">
+          <div className="space-y-0.5 text-right text-[11px] leading-tight text-[var(--muted)]">
             <p>Target {target}</p>
             <p>Makan {totals.foodCalories}</p>
             <p>Olahraga +{totals.exerciseCalories}</p>
           </div>
         </div>
 
-        <div className="flex h-full min-w-full shrink-0 basis-full snap-center flex-col justify-center gap-1">
+        <div className="flex h-full min-w-full shrink-0 basis-full snap-center flex-col justify-center gap-1.5">
           <MacroBar
             label="Karbo"
             current={totals.carbs}
@@ -114,15 +114,15 @@ export function MacroSummary({
         </div>
       </div>
 
-      <div className="mt-1 flex justify-center gap-1">
+      <div className="mt-1.5 flex justify-center gap-1">
         {[0, 1].map((i) => (
           <button
             key={i}
             type="button"
             aria-label={`Ringkasan ${i + 1}`}
             onClick={() => setPage(i)}
-            className={`h-0.5 rounded-full transition-all ${
-              page === i ? 'w-3 bg-[var(--brand)]' : 'w-1 bg-[var(--border)]'
+            className={`h-1 rounded-full transition-all ${
+              page === i ? 'w-3.5 bg-[var(--brand)]' : 'w-1.5 bg-[var(--border)]'
             }`}
           />
         ))}

@@ -3,7 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { isValid, parseISO, startOfDay } from 'date-fns';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Trash2 } from 'lucide-react';
 import { AppShell } from '@/components/AppShell';
 import { DateStrip } from '@/components/DateStrip';
 import { MacroSummary } from '@/components/MacroSummary';
@@ -112,7 +112,18 @@ function TodayPageInner() {
         supabase.from('calorie_logs').select('log_date, type, calories').eq('user_id', user.id),
       ]);
 
-    setLogs((dayLogs as CalorieLog[]) || []);
+    const rawLogs = (dayLogs as CalorieLog[]) || [];
+    const orphanLogs = rawLogs.filter((l) => !l.message_id);
+    if (orphanLogs.length > 0) {
+      // Leftover from ON DELETE SET NULL — remove so MacroSummary stays accurate
+      void supabase
+        .from('calorie_logs')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('log_date', selectedKey)
+        .is('message_id', null);
+    }
+    setLogs(rawLogs.filter((l) => Boolean(l.message_id)));
     const cleaned = ((dayMessages as ChatMessage[]) || []).filter(
       (m) =>
         !(
@@ -470,8 +481,28 @@ function TodayPageInner() {
         return updatedAsst as ChatMessage;
       }
 
-      // UPDATE blocked (missing RLS) or row gone — replace via delete + insert
+      // UPDATE blocked (missing RLS) or row gone — replace, but keep created_at
+      // so the reply stays in the same chat order (not appended at the end).
+      const { data: newAsst, error: insErr } = await supabase
+        .from('chat_messages')
+        .insert({
+          user_id: user!.id,
+          log_date: selectedKey,
+          sender: 'assistant',
+          message_text: aiJson.reply,
+          structured_data: aiJson,
+          created_at: assistantMsg.created_at,
+        })
+        .select('*')
+        .single();
+      if (insErr) throw insErr;
+
       await supabase.from('chat_messages').delete().eq('id', assistantMsg.id);
+
+      setMessages((prev) =>
+        prev.map((m) => (m.id === assistantMsg.id ? (newAsst as ChatMessage) : m))
+      );
+      return newAsst as ChatMessage;
     }
 
     const { data: newAsst, error: insErr } = await supabase
@@ -487,14 +518,21 @@ function TodayPageInner() {
       .single();
     if (insErr) throw insErr;
 
-    if (assistantMsg) {
-      setMessages((prev) =>
-        prev.map((m) => (m.id === assistantMsg.id ? (newAsst as ChatMessage) : m))
-      );
-    } else {
-      setMessages((prev) => [...prev, newAsst as ChatMessage]);
-    }
+    setMessages((prev) => [...prev, newAsst as ChatMessage]);
     return newAsst as ChatMessage;
+  };
+
+  /** Resolve the assistant reply for a user message even if pairing broke. */
+  const resolveAssistantForUser = (
+    userMsg: ChatMessage,
+    pairedAssistant?: ChatMessage
+  ): ChatMessage | undefined => {
+    if (pairedAssistant) return pairedAssistant;
+    const idx = messages.findIndex((m) => m.id === userMsg.id);
+    if (idx < 0) return undefined;
+    const next = messages[idx + 1];
+    if (next?.sender === 'assistant') return next;
+    return undefined;
   };
 
   const loadImageForRecalc = async (
@@ -528,6 +566,17 @@ function TodayPageInner() {
     newText: string
   ) => {
     if (!user || !profile) return;
+
+    // Only the latest user message can be edited — avoids cascading
+    // "sisa kalori" recalculation for later replies.
+    const lastUser = [...messages].reverse().find((m) => m.sender === 'user');
+    if (!lastUser || lastUser.id !== userMsg.id) {
+      alert('Hanya chat terakhir yang bisa diedit. Hapus chat di bawahnya dulu, atau kirim catatan baru.');
+      return;
+    }
+
+    const resolvedAssistant = resolveAssistantForUser(userMsg, assistantMsg);
+
     setBusy(true);
     try {
       const { data: updatedUser, error: userUpdErr } = await supabase
@@ -549,17 +598,17 @@ function TodayPageInner() {
       );
 
       // Remove old logs for this pair so day totals exclude them during recalculate
-      if (assistantMsg) {
-        await supabase.from('calorie_logs').delete().eq('message_id', assistantMsg.id);
+      if (resolvedAssistant) {
+        await supabase.from('calorie_logs').delete().eq('message_id', resolvedAssistant.id);
       }
-      const logsWithoutPair = assistantMsg
-        ? logs.filter((l) => l.message_id !== assistantMsg.id)
+      const logsWithoutPair = resolvedAssistant
+        ? logs.filter((l) => l.message_id !== resolvedAssistant.id)
         : logs;
       setLogs(logsWithoutPair);
       const baseTotals = dayTotalsFromLogs(logsWithoutPair, profile);
 
       const history = messages
-        .filter((m) => m.id !== assistantMsg?.id)
+        .filter((m) => m.id !== resolvedAssistant?.id)
         .map((m) =>
           m.id === userMsg.id
             ? { sender: m.sender, message_text: newText }
@@ -591,7 +640,7 @@ function TodayPageInner() {
       const aiJson = (await aiRes.json()) as AiResponse & { error?: string };
       if (!aiRes.ok) throw new Error(aiJson.error || 'AI gagal hitung ulang');
 
-      const targetAssistant = await upsertAssistantMessage(assistantMsg, aiJson);
+      const targetAssistant = await upsertAssistantMessage(resolvedAssistant, aiJson);
 
       const inserts: Omit<CalorieLog, 'id' | 'created_at'>[] = [
         ...(aiJson.foodItems || []).map((item) => ({
@@ -653,22 +702,105 @@ function TodayPageInner() {
     if (!confirm('Hapus chat ini beserta catatannya? Total hari ini akan dihitung ulang.')) return;
     setBusy(true);
     try {
-      if (assistantMsg) {
-        await supabase.from('calorie_logs').delete().eq('message_id', assistantMsg.id);
-        await supabase.from('chat_messages').delete().eq('id', assistantMsg.id);
+      const resolvedAssistant = resolveAssistantForUser(userMsg, assistantMsg);
+      const assistantIds = new Set<string>();
+      if (resolvedAssistant) assistantIds.add(resolvedAssistant.id);
+
+      // Also remove any orphan assistant replies that sit right after this user
+      // message if pairing was broken by a previous edit fallback.
+      const userIdx = messages.findIndex((m) => m.id === userMsg.id);
+      if (userIdx >= 0) {
+        for (let i = userIdx + 1; i < messages.length; i++) {
+          const m = messages[i];
+          if (m.sender === 'user') break;
+          if (m.sender === 'assistant') assistantIds.add(m.id);
+        }
+      }
+
+      const ids = [...assistantIds];
+      if (ids.length) {
+        await supabase.from('calorie_logs').delete().in('message_id', ids);
+        await supabase.from('chat_messages').delete().in('id', ids);
       }
       await supabase.from('chat_messages').delete().eq('id', userMsg.id);
 
-      const nextLogs = assistantMsg
-        ? logs.filter((l) => l.message_id !== assistantMsg.id)
-        : logs;
-      setLogs(nextLogs);
+      // Clean orphan logs left behind by ON DELETE SET NULL
+      await supabase
+        .from('calorie_logs')
+        .delete()
+        .eq('user_id', user!.id)
+        .eq('log_date', selectedKey)
+        .is('message_id', null);
+
+      setLogs((prev) =>
+        prev.filter(
+          (l) => l.message_id != null && !assistantIds.has(l.message_id)
+        )
+      );
       setMessages((prev) =>
-        prev.filter((m) => m.id !== userMsg.id && m.id !== assistantMsg?.id)
+        prev.filter((m) => m.id !== userMsg.id && !assistantIds.has(m.id))
       );
     } catch (err) {
       console.error(err);
       alert('Gagal menghapus chat');
+      await loadDay();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDeleteAssistantMessage = async (assistantMsg: ChatMessage) => {
+    if (!confirm('Hapus jawaban AI ini beserta catatannya?')) return;
+    setBusy(true);
+    try {
+      await supabase.from('calorie_logs').delete().eq('message_id', assistantMsg.id);
+      await supabase.from('chat_messages').delete().eq('id', assistantMsg.id);
+      await supabase
+        .from('calorie_logs')
+        .delete()
+        .eq('user_id', user!.id)
+        .eq('log_date', selectedKey)
+        .is('message_id', null);
+
+      setLogs((prev) => prev.filter((l) => l.message_id !== assistantMsg.id));
+      setMessages((prev) => prev.filter((m) => m.id !== assistantMsg.id));
+    } catch (err) {
+      console.error(err);
+      alert('Gagal menghapus');
+      await loadDay();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleClearOrphans = async () => {
+    // Assistant messages that are not immediately after a user message
+    const orphans: ChatMessage[] = [];
+    for (let i = 0; i < messages.length; i++) {
+      const m = messages[i];
+      if (m.sender !== 'assistant') continue;
+      const prev = messages[i - 1];
+      if (!prev || prev.sender !== 'user') orphans.push(m);
+    }
+    if (!orphans.length) return;
+    if (!confirm(`Hapus ${orphans.length} jawaban AI tersisa beserta catatannya?`)) return;
+    if (!user) return;
+    setBusy(true);
+    try {
+      const ids = orphans.map((m) => m.id);
+      await supabase.from('calorie_logs').delete().in('message_id', ids);
+      await supabase.from('chat_messages').delete().in('id', ids);
+      await supabase
+        .from('calorie_logs')
+        .delete()
+        .eq('user_id', user.id)
+        .eq('log_date', selectedKey)
+        .is('message_id', null);
+      setLogs((prev) => prev.filter((l) => !l.message_id || !ids.includes(l.message_id)));
+      setMessages((prev) => prev.filter((m) => !ids.includes(m.id)));
+    } catch (err) {
+      console.error(err);
+      alert('Gagal menghapus jawaban tersisa');
       await loadDay();
     } finally {
       setBusy(false);
@@ -693,6 +825,11 @@ function TodayPageInner() {
     }
     return list;
   }, [messages]);
+
+  const orphanCount = useMemo(
+    () => paired.filter((p) => !p.user && p.assistant).length,
+    [paired]
+  );
 
   const [showWater, setShowWater] = useState(true);
   useEffect(() => {
@@ -722,6 +859,24 @@ function TodayPageInner() {
         </div>
 
         <div ref={feedRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-3">
+          {orphanCount > 0 && !busy && (
+            <div className="mx-3 mt-2 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2.5 animate-fade-up">
+              <p className="text-xs leading-relaxed text-amber-950">
+                Ada {orphanCount} jawaban AI tersisa tanpa chat user (biasanya dari edit lama).
+                Hapus supaya total kalori akurat.
+              </p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => void handleClearOrphans()}
+                  className="inline-flex items-center gap-1 rounded-lg bg-amber-900 px-2.5 py-1.5 text-[11px] font-medium text-white"
+                >
+                  <Trash2 size={12} />
+                  Hapus jawaban tersisa
+                </button>
+              </div>
+            </div>
+          )}
           {paired.length === 0 && !busy && (
             <div className="mx-4 mt-4 rounded-2xl border border-dashed border-[var(--border)] bg-white/60 px-4 py-8 text-center animate-fade-up">
               <p className="display-font text-lg font-semibold">Cerita ke Calo</p>
@@ -730,32 +885,43 @@ function TodayPageInner() {
               </p>
             </div>
           )}
-          {paired.map((pair, idx) => (
-            <div key={pair.user?.id || pair.assistant?.id || idx}>
-              {pair.user && (
-                <MealCard
-                  message={pair.user}
-                  onEditUserMessage={
-                    busy
-                      ? undefined
-                      : (text) => handleEditUserMessage(pair.user!, pair.assistant, text)
-                  }
-                  onDeleteUserMessage={
-                    busy
-                      ? undefined
-                      : () => handleDeleteUserMessage(pair.user!, pair.assistant)
-                  }
-                />
-              )}
-              {pair.assistant && (
-                <MealCard
-                  message={pair.assistant}
-                  userText={pair.user?.message_text || undefined}
-                  logs={logsByMessage.get(pair.assistant.id) || []}
-                />
-              )}
-            </div>
-          ))}
+          {(() => {
+            const lastUserId = [...messages].reverse().find((m) => m.sender === 'user')?.id;
+            return paired.map((pair, idx) => {
+              const canEdit = Boolean(pair.user && pair.user.id === lastUserId && !busy);
+              return (
+                <div key={pair.user?.id || pair.assistant?.id || idx}>
+                  {pair.user && (
+                    <MealCard
+                      message={pair.user}
+                      onEditUserMessage={
+                        canEdit
+                          ? (text) => handleEditUserMessage(pair.user!, pair.assistant, text)
+                          : undefined
+                      }
+                      onDeleteUserMessage={
+                        busy
+                          ? undefined
+                          : () => handleDeleteUserMessage(pair.user!, pair.assistant)
+                      }
+                    />
+                  )}
+                  {pair.assistant && (
+                    <MealCard
+                      message={pair.assistant}
+                      userText={pair.user?.message_text || undefined}
+                      logs={logsByMessage.get(pair.assistant.id) || []}
+                      onDeleteUserMessage={
+                        !pair.user && !busy
+                          ? () => handleDeleteAssistantMessage(pair.assistant!)
+                          : undefined
+                      }
+                    />
+                  )}
+                </div>
+              );
+            });
+          })()}
           {busy && (
             <div className="mx-4 mt-2 flex justify-start animate-fade-up">
               <div className="mr-6 flex max-w-[85%] items-center gap-2 rounded-2xl rounded-tl-md border border-[var(--border)] bg-white px-4 py-3 text-sm text-[var(--muted)] shadow-[var(--shadow)]">

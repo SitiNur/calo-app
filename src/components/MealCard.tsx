@@ -197,10 +197,6 @@ export function MealCard({
                       setDraft(message.message_text || '');
                       setEditing(false);
                     }
-                    if (e.key === 'Enter' && !e.shiftKey) {
-                      e.preventDefault();
-                      void saveEdit();
-                    }
                   }}
                   rows={2}
                   className="w-full resize-none rounded-lg bg-white/10 px-2 py-1.5 text-sm leading-relaxed text-white outline-none ring-1 ring-white/30 placeholder:text-white/60"
@@ -294,7 +290,21 @@ export function MealCard({
           <MealBreakdown data={data} logs={logs} />
         ) : null}
       </div>
-      <p className="mt-1 text-[10px] text-[var(--muted)]">{time}</p>
+      <div className="mt-1 flex items-center gap-2">
+        {onDeleteUserMessage && (
+          <button
+            type="button"
+            aria-label="Hapus jawaban"
+            title="Hapus jawaban tersisa"
+            onClick={() => void onDeleteUserMessage()}
+            className="inline-flex items-center gap-1 rounded-full border border-[var(--border)] bg-white px-2 py-1 text-[10px] font-medium text-[var(--miss)] shadow-sm"
+          >
+            <Trash2 size={12} />
+            Hapus
+          </button>
+        )}
+        <p className="text-[10px] text-[var(--muted)]">{time}</p>
+      </div>
     </div>
   );
 }

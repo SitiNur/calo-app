@@ -140,12 +140,6 @@ export function Composer({
           value={text}
           disabled={disabled || sending}
           onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              void submit();
-            }
-          }}
           placeholder={pending ? 'Jelaskan isi fotonya (opsional)…' : PLACEHOLDER}
           className="max-h-16 min-h-[32px] flex-1 resize-none overflow-y-auto bg-transparent py-1.5 text-[13px] leading-4 outline-none placeholder:text-[var(--muted)]"
         />
