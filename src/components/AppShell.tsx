@@ -81,7 +81,7 @@ export function AppShell({
         </div>
         <div className="w-8" />
       </header>
-      <main className="flex min-h-0 flex-1 flex-col overflow-hidden">{children}</main>
+      <main className="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain">{children}</main>
       <InstallPrompt />
     </div>
   );
