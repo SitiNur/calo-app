@@ -47,6 +47,21 @@ Web app installable di HP untuk tracking kalori dengan UI chat. Input teks/foto 
    ```
    Buka http://localhost:3000
 
+## Mencegah Supabase Free Plan pause
+
+Free Plan pause otomatis setelah ~7 hari aktivitas DB rendah. Solusi di repo ini:
+
+1. **Jalankan SQL sekali** di Supabase SQL Editor: [`supabase/keepalive.sql`](supabase/keepalive.sql)
+2. **GitHub Actions** (disarankan) — workflow [`.github/workflows/supabase-keepalive.yml`](.github/workflows/supabase-keepalive.yml) ping 2× sehari.
+   - Push repo ke GitHub
+   - Settings → Secrets → Actions: isi `NEXT_PUBLIC_SUPABASE_URL` dan `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   - Actions → **Supabase keepalive** → Run workflow (uji sekali)
+3. **Alternatif** — monitor eksternal (cron-job.org / UptimeRobot) hit `GET https://your-app/api/keepalive` tiap hari.
+   - Opsional: set `KEEPALIVE_SECRET` di env, kirim header `x-keepalive-secret`
+
+> Jika project **sudah pause**, Resume dulu di Dashboard. Cron tidak bisa membangunkan project yang paused.  
+> Solusi permanen: upgrade ke **Pro** (tidak pernah di-pause karena idle).
+
 ## Fitur
 
 - Onboarding: BMR → TDEE → target kalori (turun/maintain/naik BB)
@@ -54,6 +69,7 @@ Web app installable di HP untuk tracking kalori dengan UI chat. Input teks/foto 
 - Sisa kalori harian + makro + water tracker
 - Weekly summary, weight log, goals, reminders, settings
 - PWA: Install to Home Screen (manifest + icons)
+- Keepalive cron untuk Supabase Free Plan
 
 ## Rumus kalori
 

@@ -1,0 +1,70 @@
+# Ping Supabase setiap hari supaya Free Plan tidak pause (~7 hari idle).
+# Setup: GitHub → Settings → Secrets and variables → Actions
+#   NEXT_PUBLIC_SUPABASE_URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY
+#
+# Sebelum workflow jalan: jalankan supabase/keepalive.sql di SQL Editor.
+# Jika project sudah pause: Resume dulu di Dashboard, baru cron bisa menjaga.
+
+name: Supabase keepalive
+
+on:
+  schedule:
+    # 2× sehari (UTC) — lebih aman dari 1× (kalau sekali gagal masih ada cadangan)
+    - cron: '0 1 * * *'
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping keepalive RPC / table
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_ANON_KEY:-}" ]; then
+            echo "Missing secrets: NEXT_PUBLIC_SUPABASE_URL and/or NEXT_PUBLIC_SUPABASE_ANON_KEY"
+            exit 1
+          fi
+
+          BASE="${SUPABASE_URL%/}"
+          echo "Pinging ${BASE} …"
+
+          # 1) RPC touch_keepalive (aktivitas write + read)
+          code=$(curl -sS -o /tmp/ka-rpc.json -w "%{http_code}" \
+            -X POST "${BASE}/rest/v1/rpc/touch_keepalive" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}') || true
+
+          echo "RPC HTTP ${code}"
+          cat /tmp/ka-rpc.json || true
+          echo
+
+          if [ "$code" = "200" ] || [ "$code" = "204" ]; then
+            echo "✅ Keepalive RPC OK"
+            exit 0
+          fi
+
+          # 2) Fallback SELECT tabel keepalive
+          code2=$(curl -sS -o /tmp/ka-select.json -w "%{http_code}" \
+            "${BASE}/rest/v1/keepalive?id=eq.1&select=id,ping,updated_at" \
+            -H "apikey: ${SUPABASE_ANON_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_ANON_KEY}") || true
+
+          echo "SELECT HTTP ${code2}"
+          cat /tmp/ka-select.json || true
+          echo
+
+          if [ "$code2" = "200" ]; then
+            echo "✅ Keepalive SELECT OK"
+            exit 0
+          fi
+
+          echo "❌ Keepalive gagal. Pastikan supabase/keepalive.sql sudah dijalankan, project tidak pause, dan secrets benar."
+          exit 1
