@@ -192,7 +192,20 @@ export default function AccountPage() {
             </label>
           )}
 
-          <div className="rounded-2xl bg-[var(--bg-soft)] px-4 py-3 text-sm space-y-1">
+          <div className="rounded-2xl bg-[var(--bg-soft)] px-4 py-3 text-sm space-y-2">
+            <div className="space-y-1.5 text-xs leading-relaxed text-[var(--muted)]">
+              <p>
+                <span className="font-semibold text-[var(--ink)]">BMR</span> (Basal Metabolic
+                Rate) — kalori yang tubuh bakar saat istirahat total, untuk fungsi dasar seperti
+                napas dan detak jantung.
+              </p>
+              <p>
+                <span className="font-semibold text-[var(--ink)]">TDEE</span> (Total Daily Energy
+                Expenditure) — total kalori harian setelah ditambah aktivitas. Target makanmu
+                dihitung dari TDEE ± tujuan (turun/maintain/naik BB).
+              </p>
+            </div>
+
             <p>
               BMR {preview.bmr} · TDEE {preview.tdee}
             </p>
